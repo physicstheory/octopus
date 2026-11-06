@@ -38,16 +38,20 @@ Mesh finishing (clean-up, decimation, UVs, texture baking, LODs) always runs on 
 
 ## Run it in the cloud (nothing to install)
 
-Octopus can live on a free [Hugging Face Space](https://huggingface.co/spaces), so it's always online at your own web address and opens on any device, with no install and no waiting. It takes about 5 minutes to set up, once:
+Octopus can live on a free [Hugging Face Space](https://huggingface.co/spaces), so it's always online at your own web address and opens on any device, with no install and no waiting.
+
+**Easy way (2 minutes):** open [**Put Octopus online**](https://colab.research.google.com/github/physicstheory/octopus/blob/main/colab/Put_Octopus_Online.ipynb), make a free Hugging Face token with the link it gives you, type an invite code, and press ▶. It creates the Space, its settings and its data store for you, then tells you your Octopus's web address. Hugging Face builds it for about 10 minutes, once.
+
+<details><summary>Doing it by hand instead</summary>
 
 1. Sign in at [huggingface.co](https://huggingface.co/join) (free).
 2. Make a **Write** token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens/new?tokenType=write) and copy it.
 3. Create a Space at [huggingface.co/new-space](https://huggingface.co/new-space): name it `octopus`, choose **Docker** → **Blank**, hardware **CPU basic (free)**, and **Public**. (Octopus has its own sign-in, and your data is kept in a separate private dataset.)
-4. In the Space, open **Settings → Variables and secrets** and add two **secrets**:
-   - `OCTOPUS_PASSWORD`: an invite code you make up. People need it to create an account.
-   - `HF_TOKEN`: the token from step 2.
-5. Open the Space's **Files** tab, choose **Add file → Create a new file**, name it `Dockerfile`, paste in everything from [cloud/Dockerfile](cloud/Dockerfile) and press **Commit**.
-6. The first build takes about 10 minutes. Then open **https://YOUR-USERNAME-octopus.hf.space**, create your owner account with the invite code, and bookmark it.
+4. In the Space, open **Settings → Variables and secrets** and add two **secrets**: `OCTOPUS_PASSWORD` (an invite code you make up) and `HF_TOKEN` (the token from step 2).
+5. Open the Space's **Files** tab, choose **Add file → Create a new file**, name it `Dockerfile`, paste in everything from [cloud/Dockerfile](cloud/Dockerfile) and press **Commit**. Then edit `README.md` and set `app_port: 7860`.
+6. After the build, open **https://YOUR-USERNAME-octopus.hf.space** and create your owner account with the invite code.
+
+</details>
 
 What to expect:
 
