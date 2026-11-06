@@ -2,13 +2,17 @@
 # The Space needs two secrets: OCTOPUS_PASSWORD (the invite code people use to create accounts)
 # and HF_TOKEN (a Hugging Face "Write" token, used to save your data and for 3D and image GPU time).
 # Build pulls the latest Octopus from GitHub; use "Factory rebuild" on the Space to update.
+FROM ollama/ollama:latest AS ollama
+# Keep only what runs on a CPU: the Space has no GPU, and the CUDA libraries add about 4.5 GB.
+RUN rm -rf /usr/lib/ollama/cuda_* /usr/lib/ollama/mlx_* /usr/lib/ollama/rocm* /usr/lib/ollama/include
+
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates libgl1 libglib2.0-0 \
  && rm -rf /var/lib/apt/lists/*
 # Ollama runs the chat models.
-COPY --from=ollama/ollama:latest /usr/bin/ollama /usr/bin/ollama
-COPY --from=ollama/ollama:latest /usr/lib/ollama /usr/lib/ollama
+COPY --from=ollama /usr/bin/ollama /usr/bin/ollama
+COPY --from=ollama /usr/lib/ollama /usr/lib/ollama
 
 RUN useradd -m -u 1000 user
 USER user
