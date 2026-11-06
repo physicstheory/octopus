@@ -53,6 +53,14 @@
         <kbd>⌘K</kbd>
       </button>
 
+      <div class="types" role="list" aria-label="Chat types">
+        <button class="nav-item type-item" data-type="chat"><svg viewBox="0 0 24 24"><path d="M5 18.5 3.5 21l.8-4A8.5 8.5 0 1 1 7.8 19.7Z"/></svg><span>Chat</span></button>
+        <button class="nav-item type-item" data-type="code"><svg viewBox="0 0 24 24"><path d="m8.5 7.5-5 4.5 5 4.5M15.5 7.5l5 4.5-5 4.5M13.5 5l-3 14"/></svg><span>Code</span></button>
+        <button class="nav-item type-item" data-type="model"><svg viewBox="0 0 24 24"><path d="M12 3 4 7.5v9L12 21l8-4.5v-9Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></svg><span>Modelling</span><span class="badge">3D</span></button>
+        <button class="nav-item type-item" data-type="image"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5"/></svg><span>Image</span></button>
+      </div>
+      <div class="side-sep"></div>
+
       <button id="nav-train" class="nav-item">
         <svg viewBox="0 0 24 24"><path d="M12 3a4 4 0 0 0-4 4v1a4 4 0 0 0-3 6.5A4 4 0 0 0 9 21h.5M12 3a4 4 0 0 1 4 4v1a4 4 0 0 1 3 6.5A4 4 0 0 1 15 21h-.5M12 3v18"/></svg>
         <span>Train Octopus</span>
@@ -103,6 +111,12 @@
           <button role="tab" data-mode="code" aria-selected="false">
             <svg viewBox="0 0 24 24"><path d="m8.5 7.5-5 4.5 5 4.5M15.5 7.5l5 4.5-5 4.5M13.5 5l-3 14"/></svg>Code
           </button>
+          <button role="tab" data-mode="model" aria-selected="false">
+            <svg viewBox="0 0 24 24"><path d="M12 3 4 7.5v9L12 21l8-4.5v-9Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></svg>3D
+          </button>
+          <button role="tab" data-mode="image" aria-selected="false">
+            <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5"/></svg>Image
+          </button>
         </div>
       </header>
 
@@ -127,6 +141,7 @@
               <svg viewBox="0 0 24 24"><path d="m20 11.5-7.8 7.8a5 5 0 0 1-7-7l8.1-8.2a3.3 3.3 0 0 1 4.7 4.7l-8.1 8.1a1.7 1.7 0 0 1-2.4-2.4l7.5-7.4"/></svg>
             </label>
             <span id="mode-chip" class="mode-chip">Chat</span>
+            <div id="gen-opts" class="gen-opts"></div>
             <div class="spacer"></div>
             <button id="send" class="send" type="submit" title="Send" aria-label="Send" disabled>
               <svg class="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
@@ -141,9 +156,18 @@
 
   <div id="toast" class="toast glass" role="status" hidden></div>
 
+  <div id="preview" class="modal" hidden>
+    <div class="modal-card glass">
+      <div class="modal-head"><b>Preview</b><span class="muted" id="preview-note">Runs sandboxed in your browser</span>
+        <button id="preview-close" class="icon-btn" aria-label="Close preview"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></svg></button></div>
+      <iframe id="preview-frame" sandbox="allow-scripts allow-pointer-lock" title="Code preview"></iframe>
+    </div>
+  </div>
+
   <script src="/vendor/marked.min.js"></script>
   <script src="/vendor/purify.min.js"></script>
   <script src="/vendor/highlight.min.js"></script>
+  <script type="module" src="/vendor/model-viewer.min.js"></script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

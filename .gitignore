@@ -4,3 +4,4 @@ __pycache__/
 workspace/
 .env
 .DS_Store
+/vendor/

@@ -1,45 +1,87 @@
-"""Octopus web server: serves the UI and the chat and training APIs."""
+"""Octopus web server: serves the UI and the chat, training, studio and import APIs."""
 
 from __future__ import annotations
 
 import hashlib
 import hmac
 import json
+import re
 import shutil
 import time
 import uuid
+import zipfile
 from dataclasses import fields
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import data as datasets
-from .config import ADAPTERS_DIR, BASE_MODELS, DEFAULT_BASE, WEB_DIR, settings
+from . import studio as studio_mod
+from .config import ADAPTERS_DIR, BASE_MODELS, COLAB_URL, DEFAULT_BASE, INCOMING_DIR, WEB_DIR, settings
+from .engine import StopFlag
 from .trainer import TrainConfig, Trainer
 
-if settings.mock:
-    from .mock import MockEngine as _Engine
+LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 
-    def detect():
-        return "Mock mode (no GPU used)"
-else:
-    from .engine import Engine as _Engine, detect_device
 
-    def detect():
-        try:
-            return detect_device().label
-        except Exception as exc:
-            return f"Unknown ({exc})"
+# ---------- choose the chat backend ----------
 
-from .engine import StopFlag, list_brains
+def has_cuda() -> bool:
+    try:
+        import torch
 
-engine = _Engine()
+        return torch.cuda.is_available()
+    except Exception:
+        return False
+
+
+def pick_engine():
+    if settings.mock:
+        from .mock import MockEngine
+
+        return MockEngine(), "mock"
+    if settings.backend == "transformers" or (settings.backend == "auto" and has_cuda()):
+        from .engine import Engine
+
+        return Engine(), "transformers"
+    from .ollama_engine import OllamaEngine
+
+    return OllamaEngine(), "ollama"
+
+
+engine, BACKEND = pick_engine()
+LOCAL_GPU = settings.mock or has_cuda()  # local training and studio need an NVIDIA GPU
 trainer = Trainer(engine)
+studio = studio_mod.Studio(free_others=engine.unload)
 app = FastAPI(title="Octopus", docs_url=None, redoc_url=None, openapi_url=None)
 _device_label = None
-LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+
+def device_label() -> str:
+    global _device_label
+    if _device_label is None:
+        if settings.mock:
+            _device_label = "Mock mode (no GPU used)"
+        elif BACKEND == "transformers":
+            from .engine import detect_device
+
+            _device_label = detect_device().label
+        else:
+            _device_label = "Ollama (your GPU or CPU)"
+    return _device_label
+
+
+def list_brains() -> list[dict]:
+    if BACKEND == "ollama":
+        from .ollama_engine import list_brains as lb
+
+        return lb()
+    from .engine import list_brains as lb
+
+    return lb()
+
 
 # ---------- auth & request hygiene ----------
 
@@ -47,6 +89,13 @@ COOKIE = "octopus_session"
 _secret = hashlib.sha256(("octopus:" + settings.password).encode()).digest()
 _token = hmac.new(_secret, b"ok", hashlib.sha256).hexdigest()
 _attempts: dict[str, list] = {}
+
+
+def is_local(req: Request) -> bool:
+    """True only for requests made directly from this computer (not via a tunnel or proxy)."""
+    host = (urlparse("//" + req.headers.get("host", "")).hostname or "").lower()
+    forwarded = any(h in req.headers for h in ("x-forwarded-for", "forwarded", "cf-connecting-ip", "x-real-ip"))
+    return bool(req.client) and req.client.host in LOOPBACK and host in LOOPBACK and not forwarded
 
 
 def authed(req: Request) -> bool:
@@ -63,6 +112,9 @@ def need_auth(req: Request) -> None:
         raise HTTPException(401, "Not signed in")
 
 
+RAW_UPLOADS = {"/api/import"}
+
+
 @app.middleware("http")
 async def guard(request: Request, call_next):
     # Block cross-site requests: other websites open in your browser must not be
@@ -72,12 +124,15 @@ async def guard(request: Request, call_next):
         host = request.headers.get("host", "")
         if origin and urlparse(origin).netloc != host:
             return JSONResponse({"detail": "Cross-origin request blocked"}, status_code=403)
-        if "application/json" not in request.headers.get("content-type", ""):
-            return JSONResponse({"detail": "Expected JSON"}, status_code=415)
+        ctype = request.headers.get("content-type", "")
+        expected = "application/octet-stream" if request.url.path in RAW_UPLOADS else "application/json"
+        if request.method != "DELETE" and expected not in ctype:
+            return JSONResponse({"detail": f"Expected {expected}"}, status_code=415)
     resp = await call_next(request)
     resp.headers["X-Content-Type-Options"] = "nosniff"
-    resp.headers["X-Frame-Options"] = "DENY"
     resp.headers["Referrer-Policy"] = "same-origin"
+    if not request.url.path.startswith("/files/"):
+        resp.headers["X-Frame-Options"] = "DENY"
     return resp
 
 
@@ -109,33 +164,32 @@ async def logout():
 
 # ---------- config & models ----------
 
-def is_local(req: Request) -> bool:
-    """True only for requests made directly from this computer (not via a tunnel or proxy)."""
-    host = (urlparse("//" + req.headers.get("host", "")).hostname or "").lower()
-    forwarded = any(h in req.headers for h in ("x-forwarded-for", "forwarded", "cf-connecting-ip", "x-real-ip"))
-    return bool(req.client) and req.client.host in LOOPBACK and host in LOOPBACK and not forwarded
-
-
 def run_allowed(req: Request) -> bool:
     return settings.allow_code_run and is_local(req)
 
 
 @app.get("/api/config")
 def config(req: Request):
-    global _device_label
     ok = authed(req)
     out = {"authed": ok, "passwordRequired": bool(settings.password), "mock": settings.mock}
     if ok:
-        if _device_label is None:
-            _device_label = detect()
         allow = run_allowed(req)
         langs = []
         if allow:
             from .runner import available_languages
 
             langs = available_languages()
+        ollama_ok = None
+        if BACKEND == "ollama":
+            from .ollama_engine import available
+
+            ollama_ok = available()
         out.update({
-            "device": _device_label,
+            "device": device_label(),
+            "backend": BACKEND,
+            "ollamaRunning": ollama_ok,
+            "localGpu": LOCAL_GPU,
+            "colabUrl": COLAB_URL,
             "bases": [{"id": k, **v} for k, v in BASE_MODELS.items()],
             "defaultBase": settings.base_model or DEFAULT_BASE,
             "brains": list_brains(),
@@ -143,6 +197,7 @@ def config(req: Request):
             "training": trainer.running,
             "allowRun": allow,
             "languages": langs,
+            "studio": studio_mod.capabilities(),
         })
     return out
 
@@ -169,11 +224,16 @@ def brains(req: Request):
 @app.delete("/api/brains/{brain_id}")
 def delete_brain(brain_id: str, req: Request):
     need_auth(req)
+    if engine.adapter == brain_id:
+        engine.unload()
+    if BACKEND == "ollama":
+        from .ollama_engine import delete_brain as db
+
+        db(brain_id)
+        return {"ok": True}
     path = (ADAPTERS_DIR / brain_id).resolve()
     if path.parent != ADAPTERS_DIR.resolve() or not path.exists():
         raise HTTPException(404, "Not found")
-    if engine.adapter == brain_id:
-        engine.unload()
     shutil.rmtree(path)
     return {"ok": True}
 
@@ -183,11 +243,17 @@ def delete_brain(brain_id: str, req: Request):
 _streams: dict[str, StopFlag] = {}
 
 
+def sse(obj) -> str:
+    return f"data: {json.dumps(obj)}\n\n"
+
+
 @app.post("/api/chat")
 async def chat(req: Request):
     need_auth(req)
     if trainer.running:
         raise HTTPException(409, "Octopus is training right now. Chat comes back when it finishes.")
+    if studio.busy:
+        raise HTTPException(409, "Octopus is making an image or 3D model. Chat comes back when it finishes.")
     body = await req.json()
     messages = body.get("messages") or []
     mode = "code" if body.get("mode") == "code" else "chat"
@@ -201,17 +267,17 @@ async def chat(req: Request):
     _streams[stream_id] = stop
 
     def events():
-        def sse(obj):
-            return f"data: {json.dumps(obj)}\n\n"
-
         try:
             if engine.status != "ready" or (base and engine.base_id != base) or engine.adapter != brain:
-                yield sse({"t": "status", "d": "Loading the model onto your GPU (the first time downloads it)…"})
-                engine.ensure_loaded(base, brain)
+                if hasattr(engine, "prepare"):
+                    for status in engine.prepare(base, brain):
+                        yield sse({"t": "status", "d": status})
+                else:
+                    yield sse({"t": "status", "d": "Loading the model onto your GPU (the first time downloads it)…"})
+                    engine.ensure_loaded(base, brain)
                 yield sse({"t": "engine", "d": engine.info()})
-            started, count = time.time(), 0
+            started = time.time()
             for piece in engine.stream(messages, mode=mode, stop=stop, temperature=temperature):
-                count += 1
                 yield sse({"t": "text", "d": piece})
             yield sse({"t": "done", "ms": int((time.time() - started) * 1000), "stopped": stop.event.is_set()})
         except Exception as exc:
@@ -246,6 +312,189 @@ async def run(req: Request):
     return await _in_thread(run_code, body.get("language", ""), body.get("code", ""))
 
 
+# ---------- Studio: images and 3D models ----------
+
+def _studio_stream(gen):
+    def events():
+        for ev in gen:
+            yield ": ping\n\n" if ev.get("t") == "ping" else sse(ev)
+
+    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+
+def _studio_ready():
+    if trainer.running:
+        raise HTTPException(409, "Octopus is training right now. Try again when it finishes.")
+    if not LOCAL_GPU:
+        raise HTTPException(409, "Making images and 3D models needs an NVIDIA GPU. Use the free cloud notebook instead.")
+
+
+@app.post("/api/generate/image")
+async def gen_image(req: Request):
+    need_auth(req)
+    _studio_ready()
+    if not studio_mod.capabilities()["image"]:
+        raise HTTPException(409, "Image generation isn't installed. Run install_studio (see README).")
+    b = await req.json()
+    return _studio_stream(studio.make_image(str(b.get("prompt", ""))[:2000], b.get("model", "sdxl"), b.get("aspect", "1:1"),
+                                            int(b.get("count", 1)), b.get("seed")))
+
+
+@app.post("/api/generate/model")
+async def gen_model(req: Request):
+    need_auth(req)
+    _studio_ready()
+    if not studio_mod.capabilities()["model3d"]:
+        raise HTTPException(409, "3D modelling isn't installed. Run install_studio (see README).")
+    b = await req.json()
+    return _studio_stream(studio.make_model(str(b.get("prompt", ""))[:2000], b.get("image_id"), b.get("preset", "fast"),
+                                            bool(b.get("texture", True)), bool(b.get("game_ready", True)), b.get("seed"),
+                                            b.get("image_name")))
+
+
+@app.post("/api/upload-image")
+async def upload_image(req: Request):
+    need_auth(req)
+    b = await req.json()
+    try:
+        return await _in_thread(studio_mod.save_upload, str(b.get("name", "image")), b.get("data", ""))
+    except Exception as exc:
+        raise HTTPException(400, f"Couldn't read that image: {exc}")
+
+
+@app.get("/api/assets")
+def assets(req: Request, kind: str | None = None):
+    need_auth(req)
+    return studio_mod.list_assets(kind)
+
+
+@app.delete("/api/assets/{aid}")
+def delete_asset(aid: str, req: Request):
+    need_auth(req)
+    try:
+        studio_mod.delete_asset(aid)
+    except FileNotFoundError:
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+@app.get("/files/{aid}/{name}")
+def asset_file(aid: str, name: str, req: Request):
+    need_auth(req)
+    folder = studio_mod.asset_dir(aid)
+    if not folder or not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", name) or name == "meta.json":
+        raise HTTPException(404, "Not found")
+    path = folder / name
+    if not path.is_file():
+        raise HTTPException(404, "Not found")
+    media = {".glb": "model/gltf-binary", ".obj": "text/plain", ".stl": "model/stl", ".png": "image/png"}.get(path.suffix)
+    resp = FileResponse(path, media_type=media)
+    # Lets the sandboxed HTML preview in Coding mode load your models.
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
+# ---------- importing results from the cloud notebook ----------
+
+MAX_IMPORT = 20 * 1024**3
+
+
+@app.post("/api/import")
+async def import_file(req: Request, kind: str, filename: str, name: str = ""):
+    """Import a brain (.gguf or adapter .zip) or a 3D model (.glb/.obj/.stl/.zip) produced elsewhere."""
+    need_auth(req)
+    filename = re.sub(r"[^A-Za-z0-9._-]+", "-", filename)[-120:] or "upload.bin"
+    ext = filename.lower().rsplit(".", 1)[-1]
+    allowed = {"brain": {"gguf", "zip"}, "model": {"glb", "obj", "stl", "zip"}}.get(kind)
+    if not allowed or ext not in allowed:
+        raise HTTPException(400, f"Can't import a .{ext} file here.")
+
+    tmp = INCOMING_DIR / f"{uuid.uuid4().hex}-{filename}"
+    size = 0
+    with tmp.open("wb") as f:
+        async for chunk in req.stream():
+            size += len(chunk)
+            if size > MAX_IMPORT:
+                f.close()
+                tmp.unlink(missing_ok=True)
+                raise HTTPException(413, "File is too large")
+            f.write(chunk)
+
+    try:
+        if kind == "brain":
+            brain = re.sub(r"[^a-z0-9._-]+", "-", (name or filename.rsplit(".", 1)[0]).lower()).strip("-")[:40] or "brain"
+            return await _in_thread(_import_brain, tmp, ext, brain)
+        return await _in_thread(_import_model, tmp, ext, name or filename.rsplit(".", 1)[0])
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _import_brain(tmp, ext: str, brain: str) -> dict:
+    if ext == "gguf":
+        if BACKEND != "ollama":
+            raise HTTPException(400, "GGUF brains are for the Ollama engine. On an NVIDIA setup, import the adapter .zip instead.")
+        from .ollama_engine import OllamaError, import_gguf
+
+        try:
+            for _ in import_gguf(tmp, brain):
+                pass
+        except OllamaError as exc:
+            raise HTTPException(400, str(exc))
+        return {"ok": True, "brain": brain}
+    out = ADAPTERS_DIR / brain
+    if out.exists():
+        out = ADAPTERS_DIR / f"{brain}-{int(time.time())}"
+    with zipfile.ZipFile(tmp) as z:
+        members = [m for m in z.namelist() if not m.endswith("/")]
+        if not any(m.endswith("adapter_config.json") for m in members):
+            raise HTTPException(400, "That zip doesn't contain a trained brain (adapter_config.json is missing).")
+        out.mkdir(parents=True)
+        for m in members:
+            target = (out / m.split("/")[-1]).resolve()
+            if target.parent == out.resolve():
+                target.write_bytes(z.read(m))
+    return {"ok": True, "brain": out.name}
+
+
+def _import_model(tmp, ext: str, label: str) -> dict:
+    aid, folder = studio_mod.new_asset("model", prompt=label[:80], preset="imported", source="import")
+    files = {}
+    if ext == "zip":
+        with zipfile.ZipFile(tmp) as z:
+            for m in z.namelist():
+                base = m.split("/")[-1]
+                e = base.lower().rsplit(".", 1)[-1]
+                if e in ("glb", "obj", "stl", "png") and re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", base):
+                    (folder / base).write_bytes(z.read(m))
+                    if e != "png":
+                        files.setdefault(e, base)
+                    elif "reference" in base:
+                        files.setdefault("reference", base)
+    else:
+        target = folder / f"model.{ext}"
+        shutil.copy(tmp, target)
+        files[ext] = target.name
+    if not any(k in files for k in ("glb", "obj", "stl")):
+        studio_mod.delete_asset(aid)
+        raise HTTPException(400, "No 3D model found in that file.")
+    try:  # fill in the missing formats so every model has GLB, OBJ and STL
+        import trimesh
+
+        src = folder / (files.get("glb") or files.get("obj") or files.get("stl"))
+        mesh = trimesh.load(src, force="mesh")
+        for e in ("glb", "obj", "stl"):
+            if e not in files:
+                mesh.export(folder / f"model.{e}")
+                files[e] = f"model.{e}"
+        stats = {"faces": int(len(mesh.faces)), "vertices": int(len(mesh.vertices))}
+    except Exception:
+        stats = None
+    meta = {**studio_mod.read_meta(aid), "files": {k: v for k, v in files.items() if k != "reference"},
+            "reference": files.get("reference"), "stats": stats}
+    studio_mod.write_meta(folder, meta)
+    return meta
+
+
 # ---------- datasets ----------
 
 @app.get("/api/datasets")
@@ -274,6 +523,20 @@ async def add_pairs(req: Request):
         raise HTTPException(400, str(exc))
 
 
+@app.post("/api/datasets/export")
+async def export_datasets(req: Request):
+    """Combine your own datasets into one JSONL file to upload to the cloud notebook."""
+    need_auth(req)
+    body = await req.json()
+    ids = [i for i in body.get("datasets", []) if str(i).startswith("file:")]
+    convos = datasets.load_examples(ids, log=lambda *_: None)
+    if not convos:
+        raise HTTPException(400, "Pick at least one of your own datasets. Open datasets can be ticked in the notebook.")
+    text = "".join(json.dumps({"messages": c}, ensure_ascii=False) + "\n" for c in convos)
+    return StreamingResponse(iter([text]), media_type="application/x-ndjson",
+                             headers={"Content-Disposition": 'attachment; filename="octopus-training.jsonl"'})
+
+
 @app.delete("/api/datasets/{ds_id}")
 def remove_dataset(ds_id: str, req: Request):
     need_auth(req)
@@ -289,6 +552,10 @@ def remove_dataset(ds_id: str, req: Request):
 @app.post("/api/train/start")
 async def train_start(req: Request):
     need_auth(req)
+    if not LOCAL_GPU:
+        raise HTTPException(409, "Training on this computer needs an NVIDIA GPU. Use the free cloud notebook instead.")
+    if studio.busy:
+        raise HTTPException(409, "Octopus is making an image or 3D model. Try again when it finishes.")
     body = await req.json()
     allowed = {f.name for f in fields(TrainConfig)}
     cfg = TrainConfig(**{k: v for k, v in body.items() if k in allowed})
@@ -357,7 +624,8 @@ def main() -> None:
     if not local and not settings.password:
         raise SystemExit("Set OCTOPUS_PASSWORD before sharing Octopus on your network (see README), "
                          "or keep OCTOPUS_HOST=127.0.0.1.")
-    print(f"\n  🐙 Octopus is running at http://{'localhost' if local else settings.host}:{settings.port}\n")
+    print(f"\n  🐙 Octopus is running at http://{'localhost' if local else settings.host}:{settings.port}")
+    print(f"     Chat engine: {BACKEND}{'' if LOCAL_GPU else ' · training and 3D use the free cloud notebook'}\n")
     uvicorn.run(app, host=settings.host, port=settings.port, log_level="warning")
 
 

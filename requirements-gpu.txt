@@ -1,0 +1,8 @@
+# Extra libraries for NVIDIA GPUs: local chat, training and image generation.
+# PyTorch itself is installed by the start script so it gets the CUDA build.
+-r requirements.txt
+transformers>=4.56
+peft>=0.17
+accelerate>=1.10
+datasets>=4.0
+diffusers>=0.35

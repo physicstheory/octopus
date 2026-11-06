@@ -135,6 +135,7 @@ function showApp() {
   if (!S.choice.base) S.choice.base = S.cfg.defaultBase;
   if (S.choice.brain && !S.cfg.brains.some((b) => b.id === S.choice.brain)) S.choice.brain = null;
   renderModelButton();
+  ollamaBanner();
   setMode(S.mode, false);
   renderHistory();
   newChat();
@@ -150,6 +151,10 @@ $("#open-sidebar").addEventListener("click", () => (isMobile() ? app.classList.a
 $("#scrim").addEventListener("click", () => app.classList.remove("mobile-open"));
 $("#new-chat").addEventListener("click", () => { newChat(); closeMobile(); });
 $("#nav-train").addEventListener("click", () => { openTrain(); closeMobile(); });
+$$(".type-item").forEach((b) => b.addEventListener("click", () => {
+  if (S.view !== "chat") showChatView();
+  setMode(b.dataset.type); newChat(); closeMobile();
+}));
 $("#search").addEventListener("input", renderHistory);
 const closeMobile = () => app.classList.remove("mobile-open");
 
@@ -167,7 +172,7 @@ function renderHistory() {
     if (g !== gi) { gi = g; nav.append(h("h6", {}, groups[g][0])); }
     nav.append(h("div", { class: "chat-item" + (c.id === S.currentId && S.view === "chat" ? " active" : ""), role: "button", tabindex: "0",
       onclick: () => { openChat(c.id); closeMobile(); }, onkeydown: (e) => e.key === "Enter" && openChat(c.id) },
-      c.mode === "code" ? h("span", { class: "mode-dot", title: "Coding chat" }) : null,
+      c.mode && c.mode !== "chat" ? h("span", { class: "mode-dot m-" + c.mode, title: { code: "Code", model: "Modelling", image: "Image" }[c.mode] }) : null,
       h("span", { class: "title" }, c.title),
       h("button", { class: "del", title: "Delete chat", "aria-label": "Delete chat", onclick: (e) => { e.stopPropagation(); deleteChat(c.id); } }, svg(ICON.trash))));
   }
@@ -219,8 +224,17 @@ function setMode(mode, persist = true) {
   const btn = $(`.segmented button[data-mode="${mode}"]`);
   $$(".segmented button").forEach((b) => b.setAttribute("aria-selected", String(b === btn)));
   requestAnimationFrame(() => { thumb.style.width = btn.offsetWidth + "px"; thumb.style.transform = `translateX(${btn.offsetLeft - 3}px)`; });
-  $("#mode-chip").textContent = mode === "code" ? (S.cfg?.allowRun ? "Code · run on this computer" : "Code") : "Chat";
-  $("#input").placeholder = mode === "code" ? "Describe what to build, or paste code and an error" : "Message Octopus";
+  $("#mode-chip").textContent = { chat: "Chat", code: S.cfg?.allowRun ? "Code · run on this computer" : "Code", model: "3D", image: "Image" }[mode];
+  $("#mode-chip").hidden = mode === "model" || mode === "image";
+  $("#input").placeholder = {
+    chat: "Message Octopus", code: "Describe what to build, or paste code and an error",
+    model: "Describe a 3D model, or attach a picture of it", image: "Describe an image",
+  }[mode];
+  $("#file").accept = mode === "model" ? "image/png,image/jpeg,image/webp" : "";
+  $(".attach").hidden = mode === "image";
+  $$(".type-item").forEach((b) => b.classList.toggle("active", b.dataset.type === mode && S.view === "chat"));
+  if ((mode === "model" || mode === "image") !== (S.attachments[0]?.kind === "image") && S.attachments.length) { S.attachments = []; renderAttachments(); }
+  renderGenOpts();
   const c = current(); if (c && !c.messages.length) c.mode = mode;
   if (!current()?.messages.length) renderEmpty();
 }
@@ -244,6 +258,18 @@ function openChat(id) {
 }
 
 const SUGGEST = {
+  model: [
+    ["Game prop", "A wooden treasure chest with iron bands and a gold lock"],
+    ["Character", "A cute cartoon robot with round eyes and antenna, standing"],
+    ["Weapon", "A fantasy sword with a glowing blue crystal in the hilt"],
+    ["Vehicle", "A low-poly red sports car"],
+  ],
+  image: [
+    ["Concept art", "A floating island city at sunset, fantasy concept art"],
+    ["Game icon", "A shiny health potion bottle icon, game UI style, plain background"],
+    ["Wallpaper", "A neon octopus swimming through a cyberpunk ocean, 4k wallpaper"],
+    ["Photo", "A cosy desk setup with plants and warm lamp light, photo"],
+  ],
   chat: [
     ["Explain something", "How do black holes evaporate?"],
     ["Plan my week", "Help me plan a productive week around school and the gym."],
@@ -259,10 +285,23 @@ const SUGGEST = {
 };
 function renderEmpty() {
   const hr = new Date().getHours();
-  $("#greeting").textContent = S.mode === "code" ? "What are we building?" : hr < 5 ? "Up late?" : hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening";
-  $("#empty-sub").textContent = S.mode === "code" ? "Octopus writes, explains and fixes code." : "How can I help you today?";
+  $("#greeting").textContent = { code: "What are we building?", model: "What should we model?", image: "What should we picture?" }[S.mode] ||
+    (hr < 5 ? "Up late?" : hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening");
+  $("#empty-sub").textContent = {
+    code: "Octopus writes, explains and fixes code.",
+    model: "Turn a description or a picture into a textured 3D model for your games.",
+    image: "Create pictures, concept art and references for 3D models.",
+  }[S.mode] || "How can I help you today?";
   const box = $("#suggestions"); box.replaceChildren();
-  for (const [t, p] of SUGGEST[S.mode]) box.append(h("button", { class: "suggestion glass-btn", onclick: () => { $("#input").value = p; autosize(); send(); } }, h("b", {}, t), h("span", {}, p)));
+  const studioMode = S.mode === "model" || S.mode === "image";
+  const local = studioMode ? studioLocal() : true;
+  for (const [t, p] of SUGGEST[S.mode]) box.append(h("button", { class: "suggestion glass-btn",
+    onclick: () => { $("#input").value = p; autosize(); send(); } }, h("b", {}, t), h("span", {}, p)));
+  box.hidden = !local;
+  $("#empty").querySelector(".cloud")?.remove(); $("#empty").querySelector(".gallery")?.remove();
+  if (studioMode && !local) $("#empty").append(cloudPanel(S.mode));
+  if (studioMode) renderGallery(S.mode);
+  updateSend();
 }
 
 function renderThread() {
@@ -276,11 +315,13 @@ function renderThread() {
 
 function userMsg(m) {
   return h("div", { class: "msg user" }, h("div", { class: "bubble" },
+    m.image ? h("img", { class: "attached", src: m.image.url, alt: "Attached picture" }) : null,
     m.files?.length ? h("div", { class: "files" }, m.files.map((f) => h("span", { class: "file-chip" }, svg(ICON.file), h("span", {}, f)))) : null,
     m.display ?? m.content));
 }
 
 function assistantMsg(m, index) {
+  if (m.kind) return assetMsg(m, index);
   const body = h("div", { class: "body" });
   const md = h("div", { class: "md" }); body.append(md);
   renderMarkdown(md, m.content);
@@ -308,6 +349,7 @@ marked.use({
       const canRun = S.cfg?.allowRun && RUNNABLE.has(language) && S.cfg.languages.includes(language);
       return `<div class="code" data-lang="${language}"><div class="code-head"><span>${language || "code"}</span><span>` +
         (canRun ? `<button data-act="run">${ICON_HTML.play}Run</button>` : "") +
+        (language === "html" ? `<button data-act="preview">${ICON_HTML.play}Preview</button>` : "") +
         `<button data-act="copy">${ICON_HTML.copy}Copy</button></span></div><pre><code class="hljs">${html}</code></pre></div>`;
     },
   },
@@ -330,6 +372,7 @@ $("#thread").addEventListener("click", async (e) => {
     await navigator.clipboard.writeText(code);
     btn.innerHTML = `${ICON_HTML.check}Copied`; setTimeout(() => (btn.innerHTML = `${ICON_HTML.copy}Copy`), 1400);
   } else if (btn.dataset.act === "run") runBlock(block, code, btn);
+  else if (btn.dataset.act === "preview") openPreview(code);
 });
 
 async function runBlock(block, code, btn) {
@@ -358,7 +401,10 @@ async function runBlock(block, code, btn) {
 // ---------- composer ----------
 const input = $("#input"), sendBtn = $("#send");
 function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, innerHeight * 0.4) + "px"; updateSend(); }
-function updateSend() { sendBtn.disabled = !S.streaming && !input.value.trim() && !S.attachments.length; sendBtn.classList.toggle("stop", !!S.streaming); }
+function updateSend() {
+  const blocked = (S.mode === "model" || S.mode === "image") && S.cfg && !studioLocal();
+  input.disabled = !!blocked;
+  sendBtn.disabled = !S.streaming && (blocked || (!input.value.trim() && !S.attachments.length)); sendBtn.classList.toggle("stop", !!S.streaming); }
 input.addEventListener("input", autosize);
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !isMobile()) { e.preventDefault(); if (!S.streaming) send(); }
@@ -370,6 +416,7 @@ addEventListener("keydown", (e) => {
 });
 
 $("#file").addEventListener("change", async (e) => {
+  if (S.mode === "model") { const f = e.target.files[0]; e.target.value = ""; if (f) attachImage(f); return; }
   for (const f of e.target.files) {
     if (f.size > 400_000) { toast(`${f.name} is too big (max 400 KB)`); continue; }
     const text = await f.text();
@@ -379,7 +426,8 @@ $("#file").addEventListener("change", async (e) => {
   e.target.value = ""; renderAttachments();
 });
 function renderAttachments() {
-  $("#attachments").replaceChildren(...S.attachments.map((a, i) => h("span", { class: "file-chip" }, svg(ICON.file), h("span", {}, a.name),
+  $("#attachments").replaceChildren(...S.attachments.map((a, i) => h("span", { class: "file-chip" + (a.kind === "image" ? " thumb-chip" : "") },
+    a.kind === "image" ? h("img", { src: a.url, alt: "" }) : svg(ICON.file), h("span", {}, a.name),
     h("button", { type: "button", title: "Remove", onclick: () => { S.attachments.splice(i, 1); renderAttachments(); } }, svg(ICON.x)))));
   updateSend();
 }
@@ -393,6 +441,7 @@ async function send() {
   const text = input.value.trim();
   if ((!text && !S.attachments.length) || S.streaming) return;
   const c = current();
+  if (S.mode === "model" || S.mode === "image") return sendStudio(c, text);
   const files = S.attachments.map((a) => a.name);
   const content = [text, ...S.attachments.map((a) => `\n\nFile: ${a.name}\n\`\`\`${extLang(a.name)}\n${a.text}\n\`\`\``)].join("").trim();
   c.messages.push({ role: "user", content, display: text || "(attached files)", files });
@@ -458,6 +507,7 @@ async function generate(c) {
 
 async function stop() {
   if (!S.streaming) return;
+  if (S.streaming.studio) { S.streaming.controller.abort(); return; }
   const { id, controller } = S.streaming;
   try { await api("/api/chat/stop", { body: { id } }); } catch {}
   setTimeout(() => controller.abort(), 400);
@@ -473,11 +523,13 @@ function showChatView() {
   $("#train").hidden = true; $("#thread").hidden = false; $("#composer-wrap").hidden = false;
   $(".topbar .segmented").hidden = false; $("#nav-train").classList.remove("active");
   if (location.hash) history.replaceState(null, "", "/");
+  $$(".type-item").forEach((b) => b.classList.toggle("active", b.dataset.type === S.mode));
   renderThread();
 }
 
 async function openTrain() {
   S.view = "train"; app.classList.add("train-view");
+  $$(".type-item").forEach((b) => b.classList.remove("active"));
   $("#thread").hidden = true; $("#empty").hidden = true; $("#composer-wrap").hidden = true;
   $(".topbar .segmented").hidden = true; $("#nav-train").classList.add("active");
   history.replaceState(null, "", "#train");
@@ -544,11 +596,12 @@ Assistant: 4.`)));
           numField("t-len", "Max tokens per example", 1024, 128, 128)),
         numField("t-limit", "Examples to use from each open dataset", 2000, 100, 100))),
     h("div", { class: "field" }, h("label", { for: "t-test" }, "Test prompt after training"), h("input", { type: "text", id: "t-test", value: "Introduce yourself in two sentences." })),
-    h("div", { class: "row" },
+    S.cfg.localGpu ? null : cloudTrainPanel(),
+    h("div", { class: "row", hidden: !S.cfg.localGpu },
       h("button", { class: "btn-primary", id: "t-start", type: "button", onclick: startTraining }, svg(ICON.brain), "Start training"),
       h("button", { class: "btn-ghost glass-btn", id: "t-stop", type: "button", hidden: true, onclick: () => api("/api/train/stop", { body: {} }) }, "Stop and save")));
 
-  const progress = h("div", { class: "panel glass" },
+  const progress = h("div", { class: "panel glass", hidden: !S.cfg.localGpu },
     h("h2", {}, h("span", { class: "step" }, "3"), "Progress"),
     h("div", { class: "stats" },
       stat("s-step", "Step", "–"), stat("s-loss", "Loss", "–"), stat("s-eta", "Time left", "–")),
@@ -564,7 +617,7 @@ Assistant: 4.`)));
 
   const wrap = h("div", {},
     h("div", { class: "train-hero" },
-      h("div", {}, h("h1", {}, "Train Octopus"), h("p", {}, `Fine-tune Octopus on your own examples, right on your ${S.cfg.mock ? "computer" : "GPU"}. Running on ${S.cfg.device}.`)),
+      h("div", {}, h("h1", {}, "Train Octopus"), h("p", {}, S.cfg.localGpu ? `Fine-tune Octopus on your own examples, right on your GPU. Running on ${S.cfg.device}.` : "Fine-tune Octopus on your own examples using a free cloud GPU, then chat with it here.")),
       h("span", { class: "status-pill glass-btn", id: "t-pill" }, h("span", { class: "dot" }), h("span", { id: "t-pill-text" }, "Ready"))),
     h("div", { class: "grid-2" }, h("div", { style: "display:grid;gap:16px;align-content:start" }, left, settings), h("div", { style: "display:grid;gap:16px;align-content:start" }, progress, brains)));
 
@@ -581,6 +634,34 @@ Assistant: 4.`)));
     const [ep, rank, limit] = presets[k];
     if (!init || !$("#t-epochs").dataset.touched) { $("#t-epochs").value = ep; $("#t-rank").value = rank; $("#t-limit").value = limit; }
   }
+}
+
+function cloudTrainPanel() {
+  const fileIn = h("input", { type: "file", accept: ".gguf,.zip", hidden: true, onchange: async (e) => {
+    const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+    const name = ($("#t-name")?.value || f.name.replace(/\.[^.]+$/, "")).trim();
+    toast(`Importing ${f.name}… big files take a minute`);
+    try { const r = await uploadRaw("brain", f, name); toast(`Brain "${r.brain}" imported`); refreshBrainsCfg(); }
+    catch (err) { toast(err.message); }
+  } });
+  return h("div", { class: "cloud", style: "padding:0;width:auto" },
+    h("p", {}, "This computer doesn't have an NVIDIA GPU, so training happens free in the cloud:"),
+    h("ol", {},
+      h("li", {}, "Tick your datasets above and download them as one file."),
+      h("li", {}, "Open the cloud notebook, upload that file, pick open datasets and press Run all."),
+      h("li", {}, "Download the .gguf brain it makes and import it here. It appears in the model menu.")),
+    h("div", { class: "row" },
+      h("button", { class: "btn-ghost glass-btn", type: "button", onclick: exportData }, svg(ICON.download), "Download my data"),
+      h("a", { class: "btn-primary", href: S.cfg.colabUrl, target: "_blank", rel: "noopener" }, svg(ICON.cloud), "Open cloud notebook"),
+      h("label", { class: "btn-ghost glass-btn", style: "cursor:pointer" }, svg(ICON.upload), "Import brain", fileIn)));
+}
+
+async function exportData() {
+  const sel = [...T.selected].filter((id) => id.startsWith("file:"));
+  if (!sel.length) return toast("Tick at least one of your own datasets (open ones are picked in the notebook)");
+  const res = await fetch("/api/datasets/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ datasets: sel }), credentials: "same-origin" });
+  if (!res.ok) return toast((await res.json().catch(() => ({}))).detail || "Export failed");
+  const a = h("a", { href: URL.createObjectURL(await res.blob()), download: "octopus-training.jsonl" }); a.click();
 }
 
 function positionThumb(segEl, btn) {
@@ -735,5 +816,225 @@ function drawChart() {
   ctx.fillText(max.toFixed(2), pad, pad + 4); ctx.fillText(min.toFixed(2), pad, hgt - pad - 4);
 }
 const fmtTime = (s) => (s == null ? "–" : s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${(s / 3600).toFixed(1)}h`);
+
+
+// ======================================================================
+// Studio: Modelling (3D) and Image chats
+// ======================================================================
+ICON.cube = '<path d="M12 3 4 7.5v9L12 21l8-4.5v-9Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>';
+ICON.download = '<path d="M12 4v12M7 11l5 5 5-5M5 20h14"/>';
+ICON.cloud = '<path d="M7 18.5h10a4 4 0 0 0 .6-8A6 6 0 0 0 6 9.6a4.5 4.5 0 0 0 1 8.9Z"/>';
+ICON.code = '<path d="m8.5 7.5-5 4.5 5 4.5M15.5 7.5l5 4.5-5 4.5"/>';
+ICON.image = '<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5"/>';
+ICON_HTML.cube = `<svg viewBox="0 0 24 24">${ICON.cube}</svg>`;
+
+const studioLocal = () => !!S.cfg?.localGpu;
+const GEN = Object.assign({ preset: "fast", texture: true, gameReady: true, imageModel: "sdxl", aspect: "1:1", count: 1 }, store.get("octopus.gen", {}));
+const saveGen = () => store.set("octopus.gen", GEN);
+
+function renderGenOpts() {
+  const box = $("#gen-opts"); if (!box) return;
+  box.replaceChildren();
+  const studio = S.cfg?.studio;
+  if (S.mode === "model") {
+    const sel = h("select", { class: "opt", title: "Quality", onchange: (e) => { GEN.preset = e.target.value; saveGen(); } },
+      (studio?.modelPresets || []).map((p) => h("option", { value: p.id, selected: p.id === GEN.preset }, p.label.split(" · ")[0])));
+    const toggle = (key, label, title) => h("button", { type: "button", class: "opt", title, "aria-pressed": String(GEN[key]),
+      onclick: (e) => { GEN[key] = !GEN[key]; saveGen(); e.currentTarget.setAttribute("aria-pressed", String(GEN[key])); } }, label);
+    box.append(sel, toggle("texture", "Textures", "Paint colours and materials onto the model"),
+      toggle("gameReady", "Game-ready", "Reduce to about 20k triangles so it runs well in games"));
+  } else if (S.mode === "image") {
+    box.append(
+      h("select", { class: "opt", title: "Image model", onchange: (e) => { GEN.imageModel = e.target.value; saveGen(); } },
+        (studio?.imageModels || []).map((m) => h("option", { value: m.id, selected: m.id === GEN.imageModel }, m.label.split(" · ")[0]))),
+      h("select", { class: "opt", title: "Shape", onchange: (e) => { GEN.aspect = e.target.value; saveGen(); } },
+        ["1:1", "16:9", "9:16", "4:3"].map((a) => h("option", { value: a, selected: a === GEN.aspect }, a))),
+      h("select", { class: "opt opt-hide-m", title: "How many", onchange: (e) => { GEN.count = +e.target.value; saveGen(); } },
+        [1, 2, 4].map((n) => h("option", { value: n, selected: n === GEN.count }, `${n} image${n > 1 ? "s" : ""}`))));
+  }
+}
+
+async function attachImage(file) {
+  if (file.size > 20_000_000) return toast("That picture is over 20 MB");
+  const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+  try {
+    const meta = await api("/api/upload-image", { body: { name: file.name, data } });
+    S.attachments = [{ kind: "image", name: file.name, id: meta.id, url: `/files/${meta.id}/${meta.files.png}` }];
+    renderAttachments();
+  } catch (err) { toast(err.message); }
+}
+
+async function sendStudio(c, text) {
+  const img = S.attachments.find((a) => a.kind === "image");
+  if (S.mode === "model" && !text && !img) return;
+  const user = { role: "user", content: text || "Make a 3D model from this picture", display: text || "Make a 3D model from this picture" };
+  if (img) user.image = { id: img.id, url: img.url, imageName: img.imageName };
+  c.messages.push(user);
+  if (c.title === "New chat") c.title = (text || img?.name || "3D model").replace(/\s+/g, " ").slice(0, 48);
+  c.mode = S.mode; c.updated = Date.now();
+  input.value = ""; S.attachments = []; renderAttachments(); autosize(); saveChats(); renderHistory();
+  $("#empty").hidden = true; thread.append(userMsg(user));
+  await generateAsset(c, S.mode, text, img?.id, img?.imageName);
+}
+
+async function generateAsset(c, kind, prompt, imageId, imageName) {
+  const label = h("span", {}, "Starting…"), pct = h("span", {}, ""), bar = h("i");
+  const prog = h("div", { class: "gen-progress" }, h("div", { class: "row" }, h("span", { style: "display:flex;gap:8px;align-items:center" }, h("span", { class: "spinner" }), label), pct),
+    h("div", { class: "progress" }, bar));
+  const el = h("div", { class: "msg assistant" }, h("div", { class: "avatar", "aria-hidden": "true" }), h("div", { class: "body" }, prog));
+  thread.append(el); stick = true; scrollDown(true);
+  const controller = new AbortController();
+  S.streaming = { id: uid(), controller, studio: true }; updateSend();
+  let asset = null, error = null; const started = Date.now();
+  const url = kind === "model" ? "/api/generate/model" : "/api/generate/image";
+  const body = kind === "model"
+    ? { prompt, image_id: imageId, image_name: imageName, preset: GEN.preset, texture: GEN.texture, game_ready: GEN.gameReady }
+    : { prompt, model: GEN.imageModel, aspect: GEN.aspect, count: GEN.count };
+  try {
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: controller.signal, credentials: "same-origin" });
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || `Request failed (${res.status})`); }
+    for await (const ev of sse(res)) {
+      if (ev.t === "progress") { label.textContent = ev.stage; if (ev.pct != null) { bar.style.width = ev.pct + "%"; pct.textContent = Math.round(ev.pct) + "%"; } }
+      else if (ev.t === "done") asset = ev.asset;
+      else if (ev.t === "error") error = ev.d;
+    }
+  } catch (err) { if (err.name !== "AbortError") error = err.message; else error = "Stopped. The current step finishes in the background."; }
+  S.streaming = null; updateSend();
+  const msg = { role: "assistant", kind, content: asset ? `[${kind === "model" ? "3D model" : "image"}: ${prompt || "from picture"}]` : "", asset, error,
+    meta: asset ? `${((Date.now() - started) / 1000).toFixed(0)}s` : null };
+  c.messages.push(msg); c.updated = Date.now(); saveChats(); renderHistory();
+  el.replaceWith(assetMsg(msg, c.messages.length - 1)); scrollDown();
+}
+
+const fileUrl = (a, name) => `/files/${a.id}/${name}`;
+const dl = (href, label) => h("a", { class: "btn-ghost glass-btn", href, download: "" }, svg(ICON.download), label);
+
+function assetMsg(m, index) {
+  const body = h("div", { class: "body" });
+  const a = m.asset;
+  if (m.error && !a) body.append(h("div", { class: "notice" }, m.error));
+  if (a && m.kind === "model") {
+    const glb = fileUrl(a, a.files.glb);
+    const viewer = document.createElement("model-viewer");
+    Object.entries({ src: glb, alt: a.prompt || "3D model", "camera-controls": "", "auto-rotate": "", "shadow-intensity": "1",
+      exposure: "1.05", "environment-image": "neutral", "touch-action": "pan-y", "interaction-prompt": "none" }).forEach(([k, v]) => viewer.setAttribute(k, v));
+    const stats = a.stats ? `${a.stats.faces.toLocaleString()} triangles` : "";
+    body.append(h("div", { class: "asset" }, viewer, h("div", { class: "asset-bar" },
+      a.reference ? h("img", { class: "ref-thumb", src: fileUrl(a, a.reference), alt: "Reference" }) : null,
+      h("span", { class: "meta" }, [a.textured ? "Textured" : "Untextured", stats, m.meta].filter(Boolean).join(" · ")),
+      dl(glb, "GLB"), a.files.obj ? dl(fileUrl(a, a.files.obj), "OBJ") : null, a.files.stl ? dl(fileUrl(a, a.files.stl), "STL") : null,
+      h("button", { class: "btn-primary", style: "height:32px;font-size:13px;padding:0 12px", onclick: () => useInCode(a) }, svg(ICON.code), "Use in Code"))));
+  } else if (a && m.kind === "image") {
+    const imgs = a.images || [a.files.png];
+    body.append(h("div", { class: "asset" }, h("div", { class: "img-grid" + (imgs.length === 1 ? " one" : "") }, imgs.map((name) => h("div", { class: "img-cell" },
+      h("img", { src: fileUrl(a, name), alt: a.prompt || "Generated image", loading: "lazy" }),
+      h("div", { class: "over" }, dl(fileUrl(a, name), "Save"),
+        h("button", { class: "btn-ghost glass-btn", onclick: () => modelFromImage(a, name) }, svg(ICON.cube), "Make 3D"))))),
+      h("div", { class: "asset-bar" }, h("span", { class: "meta" }, [IMAGE_LABEL(a.model), a.aspect, m.meta].filter(Boolean).join(" · ")))));
+  }
+  const retry = h("button", { title: "Try again", onclick: () => regenerateAsset(index) }, svg(ICON.retry));
+  body.append(h("div", { class: "msg-actions" }, retry, m.meta ? h("span", { class: "meta" }, m.meta) : null));
+  return h("div", { class: "msg assistant" }, h("div", { class: "avatar", "aria-hidden": "true" }), body);
+}
+const IMAGE_LABEL = (id) => S.cfg?.studio?.imageModels?.find((m) => m.id === id)?.label.split(" · ")[1];
+
+async function regenerateAsset(index) {
+  const c = current(); if (S.streaming) return;
+  const user = c.messages[index - 1]; c.messages = c.messages.slice(0, index); saveChats(); renderThread();
+  await generateAsset(c, c.mode, user.display === "Make a 3D model from this picture" ? "" : user.display, user.image?.id, user.image?.imageName);
+}
+
+function modelFromImage(a, name) {
+  if (!studioLocal()) return toast("Making 3D models needs the cloud notebook on this computer");
+  setMode("model"); newChat();
+  S.attachments = [{ kind: "image", name: a.prompt?.slice(0, 30) || "image", id: a.id, url: fileUrl(a, name), imageName: name }];
+  renderAttachments(); $("#input").value = a.prompt || ""; autosize();
+  toast("Picture attached. Press send to make it 3D.");
+}
+
+function useInCode(a) {
+  const url = location.origin + fileUrl(a, a.files.glb);
+  setMode("code"); newChat();
+  $("#input").value =
+`I made a 3D model called "${a.prompt || "my model"}". It's a GLB file at:
+${url}
+
+Write a single self-contained HTML file using Three.js from a CDN (import map for three and three/addons) that:
+- loads this model with GLTFLoader, centres it on a grassy ground plane and scales it to about 2 units tall
+- adds soft lighting, shadows and a sky colour
+- lets me walk around it in third person with WASD and look around with the mouse, like a simple game
+Use a \`\`\`html code block.`;
+  autosize(); input.focus();
+  toast("Ready in Code. Press send, then Preview the HTML it writes.");
+}
+
+function openPreview(code) {
+  const m = $("#preview"); m.hidden = false;
+  $("#preview-frame").srcdoc = code;
+}
+$("#preview-close").addEventListener("click", () => { $("#preview").hidden = true; $("#preview-frame").srcdoc = ""; });
+$("#preview").addEventListener("click", (e) => { if (e.target.id === "preview") $("#preview-close").click(); });
+
+// ---------- gallery & cloud panel ----------
+async function renderGallery(mode) {
+  const items = await api(`/api/assets?kind=${mode}`).catch(() => []);
+  if (S.mode !== mode || current()?.messages.length) return;
+  $("#empty").querySelector(".gallery")?.remove();
+  if (!items.length) return;
+  $("#empty").append(h("div", { class: "gallery" }, h("h6", {}, mode === "model" ? "Your 3D models" : "Your images"),
+    h("div", { class: "gallery-grid" }, items.slice(0, 12).map((a) => h("button", { class: "gallery-item", title: a.prompt || "",
+      onclick: () => openAssetChat(a, mode) },
+      mode === "image" ? h("img", { src: fileUrl(a, (a.images || [a.files.png])[0]), alt: "", loading: "lazy" })
+        : a.reference ? h("img", { src: fileUrl(a, a.reference), alt: "", loading: "lazy" }) : h("div", { class: "icon3d" }, svg(ICON.cube)),
+      h("span", {}, a.prompt || "Untitled"))))));
+}
+
+function openAssetChat(a, mode) {
+  const c = current();
+  c.messages.push({ role: "user", content: a.prompt || "Imported model", display: a.prompt || "Imported model" },
+    { role: "assistant", kind: mode, asset: a, content: `[${mode}: ${a.prompt}]` });
+  c.title = (a.prompt || "Imported model").slice(0, 48); c.mode = mode; c.updated = Date.now();
+  saveChats(); renderThread(); renderHistory();
+}
+
+function cloudPanel(mode) {
+  const fileIn = h("input", { type: "file", accept: ".glb,.obj,.stl,.zip", hidden: true, onchange: (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) importModel(f); } });
+  return h("div", { class: "cloud glass" },
+    h("h3", {}, svg(ICON.cloud), mode === "model" ? "Make 3D models free in the cloud" : "Make images free in the cloud"),
+    h("p", {}, `This computer doesn't have an NVIDIA GPU, so ${mode === "model" ? "3D modelling" : "image generation"} runs in Octopus's free Google Colab notebook instead.`),
+    h("ol", {},
+      h("li", {}, "Open the notebook and press Runtime, then Run all (sign in with Google)."),
+      h("li", {}, `Type your ${mode === "model" ? "model description or upload a picture" : "prompt"} in the Studio cell and run it.`),
+      h("li", {}, mode === "model" ? "Download the .zip it makes and import it here to view it, download GLB/OBJ/STL and use it in Code." : "Download the images it makes.")),
+    h("div", { class: "row" },
+      h("a", { class: "btn-primary", href: S.cfg.colabUrl, target: "_blank", rel: "noopener" }, svg(ICON.cloud), "Open the cloud notebook"),
+      mode === "model" ? h("label", { class: "btn-ghost glass-btn", style: "cursor:pointer" }, svg(ICON.upload), "Import a 3D model", fileIn) : null));
+}
+
+async function uploadRaw(kind, file, name = "") {
+  const res = await fetch(`/api/import?kind=${kind}&filename=${encodeURIComponent(file.name)}&name=${encodeURIComponent(name)}`, {
+    method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file, credentials: "same-origin" });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(j.detail || `Import failed (${res.status})`);
+  return j;
+}
+
+async function importModel(file) {
+  toast(`Importing ${file.name}…`);
+  try {
+    const a = await uploadRaw("model", file, file.name.replace(/\.[^.]+$/, ""));
+    if (S.mode !== "model") setMode("model");
+    openAssetChat(a, "model");
+  } catch (err) { toast(err.message); }
+}
+
+// ---------- Ollama status banner ----------
+function ollamaBanner() {
+  if (S.cfg?.backend !== "ollama" || S.cfg.ollamaRunning) return;
+  const b = h("div", { class: "notice banner" }, "Octopus chats through Ollama, which isn't running. ",
+    h("a", { href: "https://ollama.com/download", target: "_blank", rel: "noopener" }, "Install Ollama"),
+    ", open it, then refresh this page.");
+  $("#scroller").prepend(b);
+}
 
 boot();

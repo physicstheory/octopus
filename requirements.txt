@@ -1,7 +1,5 @@
-# PyTorch is installed by the start script so it can pick the right GPU build.
-transformers>=4.56
-peft>=0.17
-accelerate>=1.10
-datasets>=4.0
+# Core: the web app. Chat runs through Ollama on computers without an NVIDIA GPU.
 fastapi>=0.115
 uvicorn[standard]>=0.30
+pillow>=10
+trimesh>=4

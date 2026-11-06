@@ -12,7 +12,8 @@ HOME = Path(os.environ.get("OCTOPUS_HOME", ROOT / "workspace"))
 DATA_DIR = HOME / "datasets"      # datasets you upload in the Train section
 ADAPTERS_DIR = HOME / "brains"    # LoRA adapters ("brains") produced by training
 RUN_DIR = HOME / "runs"           # scratch folder for code run from Coding mode
-for _d in (DATA_DIR, ADAPTERS_DIR, RUN_DIR):
+INCOMING_DIR = HOME / "incoming"  # files being imported (brains, 3D models)
+for _d in (DATA_DIR, ADAPTERS_DIR, RUN_DIR, INCOMING_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # Open-weights base models Octopus can start from. All are Apache-2.0 licensed.
@@ -39,6 +40,8 @@ BASE_MODELS: dict[str, dict] = {
     },
 }
 DEFAULT_BASE = "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+
+COLAB_URL = "https://colab.research.google.com/github/physicstheory/octopus/blob/main/colab/Octopus_Cloud.ipynb"
 
 SYSTEM_PROMPTS = {
     "chat": (
@@ -73,6 +76,7 @@ class Settings:
     allow_code_run: bool = _bool("OCTOPUS_ALLOW_RUN", False)  # opt-in, see README
     run_timeout: int = int(os.environ.get("OCTOPUS_RUN_TIMEOUT", "30"))
     mock: bool = _bool("OCTOPUS_MOCK")
+    backend: str = os.environ.get("OCTOPUS_BACKEND", "auto").lower()  # auto | ollama | transformers
     extra: dict = field(default_factory=dict)
 
 
