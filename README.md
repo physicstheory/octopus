@@ -48,7 +48,7 @@ Octopus can live on a free [Hugging Face Space](https://huggingface.co/spaces), 
 2. Make a **Write** token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens/new?tokenType=write) and copy it.
 3. Create a Space at [huggingface.co/new-space](https://huggingface.co/new-space): name it `octopus`, choose **Docker** → **Blank**, hardware **CPU basic (free)**, and **Public**. (Octopus has its own sign-in, and your data is kept in a separate private dataset.)
 4. In the Space, open **Settings → Variables and secrets** and add two **secrets**: `OCTOPUS_PASSWORD` (an invite code you make up) and `HF_TOKEN` (the token from step 2).
-5. Open the Space's **Files** tab, choose **Add file → Create a new file**, name it `Dockerfile`, paste in everything from [cloud/Dockerfile](cloud/Dockerfile) and press **Commit**. Then edit `README.md` and set `app_port: 7860`.
+5. Open the Space's **Files** tab, choose **Add file → Create a new file**, name it `Dockerfile`, paste in everything from [cloud/Dockerfile](cloud/Dockerfile) and press **Commit**.
 6. After the build, open **https://YOUR-USERNAME-octopus.hf.space** and create your owner account with the invite code.
 
 </details>
