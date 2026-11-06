@@ -16,7 +16,6 @@ INCOMING_DIR = HOME / "incoming"  # files being imported (brains, 3D models)
 for _d in (DATA_DIR, ADAPTERS_DIR, RUN_DIR, INCOMING_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
-# Open-weights base models Octopus can start from. All are Apache-2.0 licensed.
 # Open models Octopus can chat with and train. "ollama" is the matching Ollama library tag (same weights,
 # quantized) used on computers without an NVIDIA GPU. "think" is sent to Ollama for models with a
 # thinking switch (None = the model has no switch). "colab" says how the free cloud notebook copes:

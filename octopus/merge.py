@@ -21,7 +21,6 @@ def _norm(key: str) -> str:
 
 
 def merge(base_id: str, adapter_dir: str | Path, out_dir: str | Path, log=print) -> Path:
-    import torch
     from huggingface_hub import snapshot_download
     from safetensors.torch import load_file, save_file
 

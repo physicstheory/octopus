@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import re
 import shutil
 import time
@@ -18,9 +19,9 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import data as datasets
-from . import accounts, meshkit, prefs
+from . import accounts, cloudsync, meshkit, prefs
 from . import studio as studio_mod
-from .config import ADAPTERS_DIR, BASE_MODELS, COLAB_URL, DEFAULT_BASE, INCOMING_DIR, WEB_DIR, settings
+from .config import ADAPTERS_DIR, BASE_MODELS, COLAB_URL, DEFAULT_BASE, HOME, INCOMING_DIR, WEB_DIR, settings
 from .engine import StopFlag
 from .trainer import TrainConfig, Trainer
 
@@ -152,8 +153,14 @@ async def guard(request: Request, call_next):
     return resp
 
 
+ON_SPACE = bool(os.environ.get("SPACE_ID"))  # running on a Hugging Face Space, behind its proxy
+OLLAMA_BRAINS = HOME / "ollama-brains"  # copies of imported .gguf brains, so a cloud restart can bring them back
+
+
 def _throttle(req: Request) -> tuple[str, int, float]:
     ip = req.client.host if req.client else "?"
+    if ON_SPACE and req.headers.get("x-forwarded-for"):
+        ip = req.headers["x-forwarded-for"].split(",")[0].strip()
     n, t = _attempts.get(ip, [0, time.time()])
     if time.time() - t > 900:
         n, t = 0, time.time()
@@ -164,8 +171,9 @@ def _throttle(req: Request) -> tuple[str, int, float]:
 
 def _signed_in(req: Request, user: dict) -> JSONResponse:
     resp = JSONResponse({"ok": True, "user": accounts.public(user)})
-    resp.set_cookie(COOKIE, accounts.start_session(user["id"]), httponly=True, samesite="strict",
-                    max_age=accounts.SESSION_DAYS * 86400, secure=req.url.scheme == "https")
+    # On a Space, Octopus can also be opened inside huggingface.co's page (an iframe), which needs SameSite=None.
+    resp.set_cookie(COOKIE, accounts.start_session(user["id"]), httponly=True, samesite="none" if ON_SPACE else "strict",
+                    max_age=accounts.SESSION_DAYS * 86400, secure=ON_SPACE or req.url.scheme == "https")
     return resp
 
 
@@ -339,6 +347,7 @@ def delete_brain(brain_id: str, req: Request):
         from .ollama_engine import delete_brain as db
 
         db(brain_id)
+        (OLLAMA_BRAINS / f"{brain_id}.gguf").unlink(missing_ok=True)
         return {"ok": True}
     path = (ADAPTERS_DIR / brain_id).resolve()
     if path.parent != ADAPTERS_DIR.resolve() or not path.exists():
@@ -580,6 +589,29 @@ async def import_file(req: Request, kind: str, filename: str, name: str = ""):
         tmp.unlink(missing_ok=True)
 
 
+def _keep_brain(path, brain: str) -> None:
+    """When Octopus saves to the cloud, keep the brain's file so it survives a restart."""
+    if cloudsync.enabled():
+        OLLAMA_BRAINS.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, OLLAMA_BRAINS / f"{brain}.gguf")
+
+
+def _restore_brains() -> None:
+    """Re-register brains whose files were restored from the cloud but aren't in Ollama yet."""
+    from .ollama_engine import BRAIN_PREFIX, _brain_bases, import_gguf, installed_models
+
+    have = {m.get("name", "").split(":")[0] for m in installed_models()}
+    bases = _brain_bases()
+    for f in sorted(OLLAMA_BRAINS.glob("*.gguf")):
+        if BRAIN_PREFIX + f.stem not in have:
+            print(f"     Restoring brain {f.stem}…")
+            try:
+                for _ in import_gguf(f, f.stem, bases.get(f.stem)):
+                    pass
+            except Exception as exc:
+                print(f"     Couldn't restore brain {f.stem}: {exc}")
+
+
 def _import_brain(tmp, ext: str, brain: str) -> dict:
     if ext == "gguf":
         if BACKEND != "ollama":
@@ -591,6 +623,7 @@ def _import_brain(tmp, ext: str, brain: str) -> dict:
                 pass
         except OllamaError as exc:
             raise HTTPException(400, str(exc))
+        _keep_brain(tmp, brain)
         return {"ok": True, "brain": brain}
     with zipfile.ZipFile(tmp) as z:
         members = [m for m in z.namelist() if not m.endswith("/")]
@@ -611,6 +644,7 @@ def _import_brain(tmp, ext: str, brain: str) -> dict:
                     shutil.copyfileobj(src, dst, 8 << 20)
                 for _ in import_gguf(part, brain, base):
                     pass
+                _keep_brain(part, brain)
             except OllamaError as exc:
                 raise HTTPException(400, str(exc))
             finally:
@@ -795,6 +829,11 @@ async def _in_thread(fn, *args):
     return await asyncio.get_running_loop().run_in_executor(None, fn, *args)
 
 
+@app.on_event("shutdown")
+def _save_on_shutdown() -> None:
+    cloudsync.save()
+
+
 @app.get("/healthz")
 def health():
     return {"ok": True, "busy": studio.busy, "studio": studio.last}
@@ -817,6 +856,8 @@ def _warm_up_ollama() -> None:
                 time.sleep(2)
             else:
                 return
+            if OLLAMA_BRAINS.exists():
+                _restore_brains()
             tag = OLLAMA_TAGS.get(settings.base_model or DEFAULT_BASE)
             if tag and not any(m.get("name", "").split(":latest")[0] == tag for m in installed_models()):
                 print(f"     Downloading the chat model ({tag}) in the background…")
@@ -879,6 +920,7 @@ def main() -> None:
     if not local and not settings.password:
         raise SystemExit("Set OCTOPUS_PASSWORD before sharing Octopus on your network (see README), "
                          "or keep OCTOPUS_HOST=127.0.0.1.")
+    cloudsync.start()
     print(f"\n  🐙 Octopus is running at http://{'localhost' if local else settings.host}:{settings.port}")
     print(f"     Chat engine: {BACKEND}{'' if LOCAL_GPU else ' · 3D and images use free cloud GPUs, training uses the cloud notebook'}\n")
     if BACKEND == "ollama":
