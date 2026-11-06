@@ -53,6 +53,25 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// When the browser loses its connection to Octopus mid-job, find out why and, if Octopus is still
+// running, wait for the job and pick up its result. Returns {asset} or {error}.
+const NET_ERR = /NetworkError|Failed to fetch|network error|Load failed|input stream|body stream/i;
+async function recoverStudio(label) {
+  for (let i = 0; i < 1200; i++) {
+    let st = null;
+    try { st = await (await fetch("/healthz", { cache: "no-store" })).json(); } catch {}
+    if (!st) return { error: "Octopus stopped running on your computer, so the job ended. Its window (start.bat) was closed or Octopus crashed. "
+      + "Double-click start.bat to start it again. If it crashed, the window and the file workspace/octopus.log show why." };
+    if (!st.busy) {
+      if (st.studio?.asset) return { asset: st.studio.asset };
+      return { error: st.studio?.error || "The connection to Octopus dropped. Press Try again." };
+    }
+    if (label) label.textContent = "Reconnected. Still working on it…";
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  return { error: "This is taking unusually long. Check the Octopus window for errors." };
+}
+
 async function* sse(res) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
@@ -503,7 +522,8 @@ async function generate(c) {
       else if (ev.t === "done") meta = `${choiceLabel()} · ${(ev.ms / 1000).toFixed(1)}s`;
     }
   } catch (err) {
-    if (err.name !== "AbortError") error = err.message;
+    if (err.name !== "AbortError") error = NET_ERR.test(err.message)
+      ? "Lost the connection to Octopus. Check that its window (start.bat) is still open, then press Try again." : err.message;
   }
   clearTimeout(raf); cancelAnimationFrame(raf);
   S.streaming = null; updateSend();
@@ -924,7 +944,14 @@ async function generateAsset(c, kind, prompt, imageId, imageName) {
       else if (ev.t === "done") asset = ev.asset;
       else if (ev.t === "error") error = ev.d;
     }
-  } catch (err) { if (err.name !== "AbortError") error = err.message; else error = "Stopped. The current step finishes in the background."; }
+  } catch (err) {
+    if (err.name === "AbortError") error = "Stopped. The current step finishes in the background.";
+    else if (NET_ERR.test(err.message) || err instanceof TypeError) {
+      label.textContent = "Lost the connection to Octopus, checking…";
+      const r = await recoverStudio(label);
+      asset = r.asset || null; error = r.error || null;
+    } else error = err.message;
+  }
   S.streaming = null; updateSend();
   const msg = { role: "assistant", kind, content: asset ? `[${kind === "model" ? "3D model" : "image"}: ${prompt || "from picture"}]` : "", asset, error,
     meta: asset ? `${((Date.now() - started) / 1000).toFixed(0)}s` : null };

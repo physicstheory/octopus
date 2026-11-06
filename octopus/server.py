@@ -665,7 +665,7 @@ async def _in_thread(fn, *args):
 
 @app.get("/healthz")
 def health():
-    return {"ok": True}
+    return {"ok": True, "busy": studio.busy, "studio": studio.last}
 
 
 app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
@@ -697,8 +697,51 @@ def _warm_up_ollama() -> None:
     threading.Thread(target=run, daemon=True).start()
 
 
+def _log_to_file() -> None:
+    """Copy everything Octopus prints, and native crashes, to workspace/octopus.log for troubleshooting."""
+    import faulthandler
+    import sys
+
+    from .config import HOME
+
+    try:
+        log = open(HOME / "octopus.log", "a", encoding="utf-8", buffering=1)
+    except OSError:
+        return
+    log.write(f"\n===== Octopus started {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
+    faulthandler.enable(log)
+
+    class Tee:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def write(self, text):
+            try:
+                log.write(text)
+            except Exception:
+                pass
+            try:
+                return self.stream.write(text) if self.stream else len(text)
+            except Exception:  # a console that can't show a character must never stop Octopus
+                return len(text)
+
+        def flush(self):
+            for s in (self.stream, log):
+                try:
+                    s.flush()
+                except Exception:
+                    pass
+
+        def __getattr__(self, name):
+            return getattr(self.stream, name)
+
+    sys.stdout, sys.stderr = Tee(sys.stdout), Tee(sys.stderr)
+
+
 def main() -> None:
     import uvicorn
+
+    _log_to_file()
 
     local = settings.host in LOOPBACK
     if not local and not settings.password:

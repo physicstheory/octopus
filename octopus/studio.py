@@ -205,6 +205,7 @@ class Studio:
         self.shape_preset = None
         self.paint_pipe = None
         self.rembg = None
+        self.last: dict | None = None  # outcome of the latest job, for a browser that lost its connection
 
     @property
     def busy(self) -> bool:
@@ -234,26 +235,33 @@ class Studio:
 
         def worker() -> None:
             try:
-                q.put({"t": "done", "asset": job(emit)})
-            except Exception as exc:
+                asset = job(emit)
+                self.last = {"asset": asset, "ended": time.time()}
+                q.put({"t": "done", "asset": asset})
+            except BaseException as exc:
                 traceback.print_exc()
-                q.put({"t": "error", "d": str(exc)})
+                msg = str(exc) or exc.__class__.__name__
+                if isinstance(exc, MemoryError):
+                    msg = "Your computer ran out of memory. Try a smaller triangle budget or texture size."
+                self.last = {"error": msg, "ended": time.time()}
+                q.put({"t": "error", "d": msg})
             finally:
+                self.lock.release()
                 q.put(None)
 
+        # The job owns the lock until it really ends, so it keeps going (and nothing else starts)
+        # even if the browser's connection drops; the page then picks up the result from /healthz.
+        self.last = {"running": True, "started": time.time()}
         threading.Thread(target=worker, daemon=True).start()
-        try:
-            while True:
-                try:
-                    ev = q.get(timeout=15)
-                except queue.Empty:
-                    yield {"t": "ping"}
-                    continue
-                if ev is None:
-                    break
-                yield ev
-        finally:
-            self.lock.release()
+        while True:
+            try:
+                ev = q.get(timeout=15)
+            except queue.Empty:
+                yield {"t": "ping"}
+                continue
+            if ev is None:
+                break
+            yield ev
 
     # ---------- images ----------
 
