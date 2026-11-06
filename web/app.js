@@ -246,7 +246,7 @@ function renderHistory() {
   const nav = $("#history"); nav.replaceChildren();
   const list = S.chats.filter((c) => c.messages.length && (!q || c.title.toLowerCase().includes(q) ||
     c.messages.some((m) => m.content.toLowerCase().includes(q))));
-  if (!list.length) { nav.append(h("div", { class: "history-empty" }, q ? "No chats match." : "Your chats will show up here.")); return; }
+  if (!list.length) { nav.append(h("div", { class: "history-empty" }, h("img", { src: "/octo/sleepy.svg", alt: "", "aria-hidden": "true" }), q ? "No chats match." : "Your chats will show up here.")); return; }
   const day = 864e5, now = new Date(), start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const groups = [["Today", start], ["Yesterday", start - day], ["Previous 7 days", start - 7 * day], ["Previous 30 days", start - 30 * day], ["Older", -Infinity]];
   let gi = -1;
@@ -432,7 +432,8 @@ function renderEmpty() {
   dockComposer(false); // take the composer out before the start screen is rebuilt
   empty.replaceChildren(
     h("div", { class: "hero" },
-      mode === "chat" ? h("div", { class: "logo-xl", "aria-hidden": "true" }) : h("span", { class: "eyebrow" }, hero.eyebrow),
+      h("img", { class: "hero-octo", src: `/octo/${mode}.svg`, alt: "", "aria-hidden": "true" }),
+      hero.eyebrow ? h("span", { class: "eyebrow" }, hero.eyebrow) : null,
       h("h1", { id: "greeting" }, title),
       hero.sub ? h("p", { class: "sub" }, hero.sub) : null),
     h("div", { class: "slot" }),
@@ -613,7 +614,7 @@ async function generate(c) {
   const md = h("div", { class: "md" }, h("span", { class: "typing" }, h("i"), h("i"), h("i")));
   const status = h("div", { class: "notice info", hidden: true });
   const body = h("div", { class: "body" }, status, md);
-  const el = h("div", { class: "msg assistant" }, h("div", { class: "avatar", "aria-hidden": "true" }), body);
+  const el = h("div", { class: "msg assistant" }, h("div", { class: "avatar thinking", "aria-hidden": "true" }), body);
   thread.append(el); stick = true; scrollDown(true);
 
   const controller = new AbortController();
@@ -767,7 +768,8 @@ Assistant: 4.`)));
 
   const wrap = h("div", {},
     h("div", { class: "train-hero" },
-      h("div", {}, h("h1", {}, "Train Octopus"), h("p", {}, S.cfg.localGpu ? `Fine-tune Octopus on your own examples, right on your GPU. Running on ${S.cfg.device}.` : "Fine-tune Octopus on your own examples using a free cloud GPU, then chat with it here.")),
+      h("img", { class: "train-octo", src: "/octo/train.svg", alt: "", "aria-hidden": "true" }),
+      h("div", { class: "grow" }, h("h1", {}, "Train Octopus"), h("p", {}, S.cfg.localGpu ? `Fine-tune Octopus on your own examples, right on your GPU. Running on ${S.cfg.device}.` : "Fine-tune Octopus on your own examples using a free cloud GPU, then chat with it here.")),
       h("span", { class: "status-pill glass-btn", id: "t-pill" }, h("span", { class: "dot" }), h("span", { id: "t-pill-text" }, "Ready"))),
     h("div", { class: "grid-2" }, h("div", { style: "display:grid;gap:16px;align-content:start" }, left, settings), h("div", { style: "display:grid;gap:16px;align-content:start" }, progress, brains)));
 
@@ -1045,9 +1047,11 @@ async function sendStudio(c, text) {
 
 async function generateAsset(c, kind, prompt, imageId, imageName) {
   const label = h("span", {}, "Starting…"), pct = h("span", {}, ""), bar = h("i");
-  const prog = h("div", { class: "gen-progress" }, h("div", { class: "row" }, h("span", { style: "display:flex;gap:8px;align-items:center" }, h("span", { class: "spinner" }), label), pct),
-    h("div", { class: "progress" }, bar));
-  const el = h("div", { class: "msg assistant" }, h("div", { class: "avatar", "aria-hidden": "true" }), h("div", { class: "body" }, prog));
+  const prog = h("div", { class: "gen-progress" },
+    h("img", { class: "work-octo", src: `/octo/${kind === "model" ? "model" : "image"}.svg`, alt: "", "aria-hidden": "true" }),
+    h("div", { class: "grow" }, h("div", { class: "row" }, h("span", { style: "display:flex;gap:8px;align-items:center" }, h("span", { class: "spinner" }), label), pct),
+      h("div", { class: "progress" }, bar)));
+  const el = h("div", { class: "msg assistant" }, h("div", { class: "avatar thinking", "aria-hidden": "true" }), h("div", { class: "body" }, prog));
   thread.append(el); stick = true; scrollDown(true);
   const controller = new AbortController();
   S.streaming = { id: uid(), controller, studio: true }; updateSend();
