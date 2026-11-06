@@ -402,11 +402,13 @@ class Studio:
 
         # 2. Raw shape (and texture) from Hunyuan3D.
         engine = {"mock": "Preview mode", "local": MODEL3D[preset]["label"]}.get(place)
+        note = ""
         if place == "mock":
             shape, painted = _mock_model(folder, emit)
         elif place == "cloud":
             out = cloud.make_model(folder / "reference.png", preset, texture, seed, emit, 16, 75)
             engine = out["space"]
+            note = out.get("note") or ""
             shape = cloud.keep(out["shape"], folder, "source-shape" + out["shape"].suffix)
             painted = cloud.keep(out["textured"], folder, "source-textured" + out["textured"].suffix) if out["textured"] else None
         else:
@@ -414,7 +416,7 @@ class Studio:
 
         meta = {**read_meta(aid), "reference": "reference.png", "engine": engine,
                 "sources": {"shape": shape.name, "textured": painted.name if painted else None},
-                "textured": bool(painted)}
+                "textured": bool(painted), "note": note}
         # 3. Game-ready finishing on this computer.
         meta.update(finish_asset(folder, shape, painted, finish, emit, start=76 if place != "local" else 80))
         write_meta(folder, meta)

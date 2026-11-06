@@ -54,7 +54,7 @@ def _client(space: str):
 def _friendly(exc: Exception, what: str) -> CloudError:
     msg = str(exc)
     low = msg.lower()
-    if "quota" in low or "zerogpu" in low and "exceed" in low:
+    if "quota" in low or ("zerogpu" in low and "exceed" in low):
         hint = ("You've used today's free cloud GPU time. Add a free Hugging Face token in Settings for more, "
                 "wait until tomorrow, or use the free cloud notebook.") if not prefs.hf_token() else (
                 "You've used today's free cloud GPU time on your Hugging Face account. It refills daily, "
@@ -158,18 +158,35 @@ def make_image(prompt: str, width: int, height: int, seed: int | None, emit, sta
     return Path(files[0])
 
 
+def _too_long(exc: Exception) -> bool:
+    """The Space asks for more GPU time per job than free accounts may use at all."""
+    return "larger than the maximum allowed" in str(exc).lower()
+
+
 def make_model(image_path: Path, preset: str, texture: bool, seed: int | None, emit, start=0.0, end=80.0) -> dict:
-    """Hunyuan3D on Hugging Face. Returns {'textured': path or None, 'shape': path}."""
+    """Hunyuan3D on Hugging Face. Returns {'shape': path, 'textured': path or None, 'space': label, 'note': str}.
+
+    Textured jobs ask the Space for far more GPU time than shape-only ones (Hunyuan3D 2.1 asks
+    for 270 s, more than a free account may use in one job; 2.0 asks for 135 s). So the order is:
+    textured on 2.1, textured on 2.0, then the shape alone (about 10 s of GPU time), which still
+    gives a full game-ready mesh with UVs, just without painted colour.
+    """
     from gradio_client import handle_file
 
     spec = PRESETS_3D.get(preset, PRESETS_3D["quality"])
-    last: Exception | None = None
-    for space in SPACES_3D:
+    plan = [(s, "/generation_all") for s in SPACES_3D] if texture else []
+    plan += [(s, "/shape_generation") for s in SPACES_3D]
+    clients: dict[str, object] = {}
+    errors: list[CloudError] = []
+    quota_hit = False
+    for space, want in plan:
+        textured_job = want == "/generation_all"
         try:
             emit(f"Connecting to {space['label']} in the free cloud…", start)
-            client = _client(space["space"])
-            prefer = ["/generation_all", "/shape_generation"] if texture else ["/shape_generation", "/generation_all"]
-            name, params = _endpoint(client, prefer)
+            if space["space"] not in clients:
+                clients[space["space"]] = _client(space["space"])
+            client = clients[space["space"]]
+            name, params = _endpoint(client, [want])
             values = {
                 "caption": None, "image": handle_file(str(image_path)),
                 "mv_image_front": None, "mv_image_back": None, "mv_image_left": None, "mv_image_right": None,
@@ -179,22 +196,36 @@ def make_model(image_path: Path, preset: str, texture: bool, seed: int | None, e
                 "randomize_seed": seed is None,
             }
             job = client.submit(*_args(params, values), api_name=name)
-            expect = 150 if "generation_all" in name else 60
-            result = _wait(job, emit, f"Sculpting{' and texturing' if 'all' in name else ''} with {space['label']}…",
-                           start, end, expect)
+            stage = f"Sculpting{' and texturing' if textured_job else ''} with {space['label']}…"
+            result = _wait(job, emit, stage, start, end, 150 if textured_job else 30)
             files = [f for f in _paths(result) if f.lower().endswith((".glb", ".obj", ".ply", ".gltf"))]
             if not files:
                 raise CloudError("The 3D service returned no model.")
-            textured = files[1] if "generation_all" in name and len(files) > 1 else None
-            return {"shape": Path(files[0]), "textured": Path(textured) if textured else None, "space": space["label"]}
+            textured = None
+            if textured_job and len(files) > 1:
+                textured = next((f for f in files if "textured" in os.path.basename(f).lower()), files[-1])
+            shape = next((f for f in files if f != textured), files[0])
+            note = ""
+            if texture and not textured:
+                note = ("Made without painted colour: the free cloud's textured jobs need more GPU time than is "
+                        "left today. Add a free Hugging Face token in Settings for more, or press Try again tomorrow.")
+            return {"shape": Path(shape), "textured": Path(textured) if textured else None,
+                    "space": space["label"], "note": note}
         except CloudError as exc:
-            last = exc
+            errors.append(exc)
         except Exception as exc:
-            last = _friendly(exc, "3D")
-            if "GPU time" in str(last):
-                break
-        emit(f"{space['label']} is unavailable, trying another…", start)
-    raise last or CloudError("The free 3D services are unavailable right now.")
+            if _too_long(exc):
+                continue  # this Space's textured job is beyond free limits; try the next option quietly
+            err = _friendly(exc, "3D")
+            quota_hit = quota_hit or "GPU time" in str(err)
+            errors.append(err)
+        nxt = plan.index((space, want)) + 1
+        if nxt < len(plan) and not (quota_hit and textured_job):
+            emit(f"{space['label']} is unavailable, trying another…", start)
+        elif nxt < len(plan):
+            emit("Not enough free GPU time left for textures today. Making the shape alone…", start)
+    quota = next((e for e in errors if "GPU time" in str(e)), None)
+    raise quota or (errors[-1] if errors else CloudError("The free 3D services are unavailable right now."))
 
 
 def keep(src: Path, folder: Path, name: str) -> Path:

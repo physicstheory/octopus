@@ -405,7 +405,10 @@ function autosize() { input.style.height = "auto"; input.style.height = Math.min
 function updateSend() {
   const blocked = (S.mode === "model" || S.mode === "image") && S.cfg && !studioReady(S.mode);
   input.disabled = !!blocked;
-  sendBtn.disabled = !S.streaming && (blocked || (!input.value.trim() && !S.attachments.length)); sendBtn.classList.toggle("stop", !!S.streaming); }
+  sendBtn.disabled = !S.streaming && (blocked || (!input.value.trim() && !S.attachments.length)); sendBtn.classList.toggle("stop", !!S.streaming);
+  // The drifting background makes the glass re-blur every frame. While a model is thinking, hold it
+  // still so a CPU-only chat model gets the processor (it ran 2.5x slower with the page animating).
+  document.body.classList.toggle("busy", !!S.streaming); }
 input.addEventListener("input", autosize);
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !isMobile()) { e.preventDefault(); if (!S.streaming) send(); }
@@ -476,8 +479,14 @@ async function generate(c) {
 
   const controller = new AbortController();
   S.streaming = { id, controller }; updateSend();
-  let text = "", error = null, meta = null, raf = 0;
-  const paint = () => { raf = 0; renderMarkdown(md, text, true); scrollDown(); };
+  let text = "", error = null, meta = null, raf = 0, last = 0;
+  // Re-rendering Markdown and the glass effects on every token can starve a CPU-only chat model of
+  // processor time on modest laptops, so repaint at most about 8 times a second while streaming.
+  const paint = () => {
+    const wait = 120 - (performance.now() - last);
+    if (wait > 0) { raf = setTimeout(() => requestAnimationFrame(paint), wait); return; }
+    raf = 0; last = performance.now(); renderMarkdown(md, text, true); scrollDown();
+  };
 
   try {
     const res = await fetch("/api/chat", {
@@ -496,7 +505,7 @@ async function generate(c) {
   } catch (err) {
     if (err.name !== "AbortError") error = err.message;
   }
-  cancelAnimationFrame(raf);
+  clearTimeout(raf); cancelAnimationFrame(raf);
   S.streaming = null; updateSend();
   const msg = { role: "assistant", content: text, meta };
   if (error) msg.error = error;
@@ -938,7 +947,7 @@ function assetMsg(m, index) {
       exposure: "1.05", "environment-image": "neutral", "touch-action": "pan-y", "interaction-prompt": "none" }).forEach(([k, v]) => viewer.setAttribute(k, v));
     const st = a.stats || {};
     const size = st.size_m ? `${st.size_m[1].toFixed(2)} m tall` : "";
-    const facts = [st.faces ? `${st.faces.toLocaleString()} triangles` : "", st.pbr ? `${st.texture / 1024}K PBR` : (a.textured ? "Textured" : "Untextured"),
+    const facts = [st.faces ? `${st.faces.toLocaleString()} triangles` : "", a.textured === false ? "Untextured" : st.pbr ? `${st.texture / 1024}K PBR` : (a.textured ? "Textured" : "Untextured"),
       st.lods?.length > 1 ? `${st.lods.length} LODs` : "", size].filter(Boolean);
     const card = h("div", { class: "asset" }, viewer, h("div", { class: "asset-bar" },
       a.reference ? h("img", { class: "ref-thumb", src: fileUrl(a, a.reference), alt: "Reference" }) : null,
@@ -951,6 +960,7 @@ function assetMsg(m, index) {
         onclick: (e) => rebuildAsset(m, index, e.currentTarget) }, svg(ICON.retry), "Rebuild") : null,
       h("button", { class: "btn-ghost glass-btn", onclick: () => useInCode(a) }, svg(ICON.code), "Use in Code")));
     body.append(card);
+    if (a.note) body.append(h("div", { class: "notice" }, a.note));
   } else if (a && m.kind === "image") {
     const imgs = a.images || [a.files.png];
     body.append(h("div", { class: "asset" }, h("div", { class: "img-grid" + (imgs.length === 1 ? " one" : "") }, imgs.map((name) => h("div", { class: "img-cell" },

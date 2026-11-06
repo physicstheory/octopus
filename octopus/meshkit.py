@@ -128,9 +128,15 @@ def decimate(g, target: int):
     import fast_simplification
     import trimesh
 
-    if len(g.faces) > target:
+    # One pass can stall well above the budget on very dense AI sculpts (a 795k-triangle
+    # Hunyuan3D mesh asked for 1,200 stopped at about 2,000), so run a few passes.
+    for _ in range(4):
+        if len(g.faces) <= target * 1.03:
+            break
         v, f = fast_simplification.simplify(np.asarray(g.vertices, dtype=np.float32), np.asarray(g.faces, dtype=np.int64),
                                             target_reduction=1 - target / len(g.faces), agg=6)
+        if len(f) >= len(g.faces):
+            break
         g = trimesh.Trimesh(v, f, process=True)
     g.update_faces(g.nondegenerate_faces())
     g.remove_unreferenced_vertices()
@@ -473,12 +479,14 @@ def finish(color_src, folder: Path, opts: FinishOptions | None = None, emit: Emi
     ratios = LOD_RATIOS if opts.lods else LOD_RATIOS[:1]
     sizes = [opts.texture_size, max(512, opts.texture_size // 2), max(256, opts.texture_size // 4)]
     pack: list[str] = []
+    prev = None  # each LOD is reduced from the one before, which keeps the budgets exact
     for lod, ratio in enumerate(ratios):
         base_frac = 0.12 + 0.8 * lod / len(ratios)
         part = 0.8 / len(ratios)
         target = max(300, int(opts.budget * ratio))
         step(f"Building LOD{lod}: reducing to {target:,} triangles…", base_frac)
-        low = decimate(g, target)
+        low = decimate(prev if prev is not None and len(prev.faces) > target else g, target)
+        prev = low.copy()
         step(f"LOD{lod}: unwrapping UVs…", base_frac + part * 0.2)
         vmap, faces, uvs = unwrap(low, sizes[lod])
         v = np.asarray(low.vertices)[vmap]

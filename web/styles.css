@@ -103,6 +103,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   66% { transform: translate(-4vw, 6vh) scale(.94); }
 }
 @media (prefers-reduced-motion: reduce) { .orb { animation: none; } }
+body.busy .orb, body.busy .logo-xl { animation-play-state: paused; }
 
 /* ---------- Glass primitives ---------- */
 .glass {
