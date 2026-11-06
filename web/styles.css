@@ -795,3 +795,14 @@ input[type="password"], input[type="text"], input[type="number"], select, .field
 .gen-progress { grid-template-columns: auto 1fr; align-items: center; gap: 14px; }
 .gen-progress .grow { display: grid; gap: 10px; }
 .work-octo { width: 48px; height: 46px; object-fit: contain; animation: octo-bob 1.6s ease-in-out infinite; }
+
+/* ---------- more models: grouped picker and thinking ---------- */
+#model-menu { max-height: min(70vh, 560px); overflow-y: auto; min-width: 340px; }
+.menu-item .size-tag { margin-left: 8px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; font-family: var(--mono, ui-monospace, monospace);
+  color: var(--text-2); background: var(--hover); vertical-align: 1px; }
+.thinking { margin: 0 0 10px; border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); padding: 2px 0 2px 12px; }
+.thinking summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 13.5px; font-weight: 500; }
+.thinking summary::-webkit-details-marker { display: none; }
+.thinking summary .chev { width: 14px; height: 14px; transition: transform .15s; }
+.thinking[open] summary .chev { transform: rotate(180deg); }
+.thinking .think-text { margin-top: 6px; white-space: pre-wrap; color: var(--text-2); font-size: 13.5px; line-height: 1.55; max-height: 320px; overflow-y: auto; }

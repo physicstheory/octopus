@@ -3,7 +3,9 @@
 Ollama runs models on NVIDIA, AMD, Intel and Apple GPUs (or the CPU), so this is
 the default engine on computers without an NVIDIA card. Brains trained in the
 cloud notebook are imported as GGUF files and become Ollama models named
-"octopus-<name>".
+"octopus-<name>". They borrow the chat template and stop words of their base
+model's Ollama tag, so every model family (Qwen, Llama, Gemma, Phi, DeepSeek)
+formats conversations the way it was trained to.
 """
 
 from __future__ import annotations
@@ -16,26 +18,41 @@ import urllib.request
 from pathlib import Path
 from typing import Iterator
 
-from .config import SYSTEM_PROMPTS, settings
+from .config import BASE_MODELS, DEFAULT_BASE, HOME, SYSTEM_PROMPTS, settings
 
 OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 if not OLLAMA_URL.startswith("http"):
     OLLAMA_URL = "http://" + OLLAMA_URL
 
-# Hugging Face base model -> Ollama library tag (same Qwen 2.5 Coder weights, quantized).
-OLLAMA_TAGS = {
-    "Qwen/Qwen2.5-Coder-0.5B-Instruct": "qwen2.5-coder:0.5b",
-    "Qwen/Qwen2.5-Coder-1.5B-Instruct": "qwen2.5-coder:1.5b",
-    "Qwen/Qwen2.5-Coder-3B-Instruct": "qwen2.5-coder:3b",
-    "Qwen/Qwen2.5-Coder-7B-Instruct": "qwen2.5-coder:7b",
-}
+# Hugging Face base model -> Ollama library tag (same weights, quantized).
+OLLAMA_TAGS = {k: v["ollama"] for k, v in BASE_MODELS.items()}
 BRAIN_PREFIX = "octopus-"
 CHATML = ("{{- range .Messages }}<|im_start|>{{ .Role }}\n{{ .Content }}<|im_end|>\n{{ end }}"
           "<|im_start|>assistant\n")
 
 
+BRAINS_FILE = HOME / "brains.json"  # brain name -> base model id, for brains imported into Ollama
+
+
 class OllamaError(RuntimeError):
     pass
+
+
+def _brain_bases() -> dict:
+    try:
+        return json.loads(BRAINS_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _remember_base(brain: str, base: str | None) -> None:
+    bases = _brain_bases()
+    if base:
+        bases[brain] = base
+    else:
+        bases.pop(brain, None)
+    BRAINS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    BRAINS_FILE.write_text(json.dumps(bases, indent=1))
 
 
 def _req(path: str, body: dict | None = None, method: str | None = None, timeout: float = 30, data: bytes | None = None,
@@ -83,22 +100,21 @@ def list_brains() -> list[dict]:
         models = installed_models()
     except OllamaError:
         return []
-    out = []
+    out, bases = [], _brain_bases()
     for m in models:
         name = m.get("name", "").split(":")[0]
         if name.startswith(BRAIN_PREFIX):
-            out.append({"id": name[len(BRAIN_PREFIX):], "base": None, "created": (m.get("modified_at") or "")[:16].replace("T", " "),
+            out.append({"id": name[len(BRAIN_PREFIX):], "base": bases.get(name[len(BRAIN_PREFIX):]), "created": (m.get("modified_at") or "")[:16].replace("T", " "),
                         "examples": None, "final_loss": None, "size": m.get("details", {}).get("parameter_size")})
     return out
 
 
 def delete_brain(brain: str) -> None:
     _req("/api/delete", {"model": BRAIN_PREFIX + brain}, method="DELETE").read()
+    _remember_base(brain, None)
 
 
-def import_gguf(path: Path, name: str) -> Iterator[str]:
-    """Register a GGUF file with Ollama as octopus-<name>; yields progress text."""
-    yield "Checking the file…"
+def _upload_blob(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(8 << 20), b""):
@@ -107,7 +123,6 @@ def import_gguf(path: Path, name: str) -> Iterator[str]:
     try:
         _req(f"/api/blobs/{digest}", method="HEAD", timeout=10).read()
     except OllamaError:
-        yield "Copying it into Ollama…"
         with path.open("rb") as f:
             req = urllib.request.Request(OLLAMA_URL + f"/api/blobs/{digest}", data=f, method="POST",
                                          headers={"Content-Length": str(path.stat().st_size)})
@@ -115,12 +130,86 @@ def import_gguf(path: Path, name: str) -> Iterator[str]:
                 urllib.request.urlopen(req, timeout=600).read()
             except urllib.error.HTTPError as exc:
                 raise OllamaError("Ollama rejected the file: " + exc.read().decode(errors="replace")) from None
+    return digest
+
+
+def _pull(tag: str) -> Iterator[str]:
+    have = {m["name"] for m in installed_models()}
+    if tag in have or f"{tag}:latest" in have:
+        return
+    yield f"Downloading {tag} (first time only)…"
+    last = -1
+    for ev in _lines(_req("/api/pull", {"model": tag, "stream": True}, timeout=3600)):
+        if ev.get("total") and ev.get("completed"):
+            pct = int(100 * ev["completed"] / ev["total"])
+            if pct != last and pct % 5 == 0:
+                last = pct
+                yield f"Downloading {tag}… {pct}%"
+
+
+REGISTRY = "https://registry.ollama.ai/v2/library"
+
+
+def _base_recipe(tag: str) -> dict:
+    """The chat template and parameters of an Ollama library model, read locally if it's installed,
+    otherwise from the Ollama registry (a few KB, without downloading the model)."""
+    try:
+        info = json.loads(_req("/api/show", {"model": tag}, timeout=20).read())
+        params: dict = {}
+        for line in (info.get("parameters") or "").splitlines():
+            k, _, v = line.strip().partition(" ")
+            v = v.strip().strip('"')
+            if k == "stop":
+                params.setdefault("stop", []).append(v)
+            elif k:
+                try:
+                    params[k] = float(v) if "." in v else int(v)
+                except ValueError:
+                    params[k] = v
+        return {"template": info.get("template"), "parameters": params}
+    except OllamaError:
+        pass
+    name, _, ref = tag.partition(":")
+    accept = {"Accept": "application/vnd.docker.distribution.manifest.v2+json"}
+    with urllib.request.urlopen(urllib.request.Request(f"{REGISTRY}/{name}/manifests/{ref or 'latest'}", headers=accept), timeout=20) as r:
+        layers = json.loads(r.read())["layers"]
+    out: dict = {}
+    for layer in layers:
+        kind = layer["mediaType"].rsplit(".", 1)[-1]
+        if kind in ("template", "params"):
+            with urllib.request.urlopen(f"{REGISTRY}/{name}/blobs/{layer['digest']}", timeout=20) as r:
+                text = r.read().decode()
+            out["template" if kind == "template" else "parameters"] = text if kind == "template" else json.loads(text)
+    return out
+
+
+def import_gguf(path: Path, name: str, base: str | None = None) -> Iterator[str]:
+    """Register a GGUF file with Ollama as octopus-<name>; yields progress text.
+
+    With the base model it was trained from, the brain gets that model's chat template and stop words.
+    Without one, Ollama reads the template stored inside the GGUF file."""
+    recipe: dict = {}
+    if base in OLLAMA_TAGS:
+        yield "Looking up how this model formats chats…"
+        try:
+            recipe = _base_recipe(OLLAMA_TAGS[base])
+        except Exception:
+            recipe = {}
+    elif base is None and "qwen" in path.name.lower():
+        recipe = {"template": CHATML, "parameters": {"stop": ["<|im_end|>", "<|endoftext|>"]}}
+    yield "Copying it into Ollama…"
+    digest = _upload_blob(path)
     yield "Creating the model…"
-    body = {"model": BRAIN_PREFIX + name, "files": {path.name: digest}, "template": CHATML,
-            "parameters": {"stop": ["<|im_end|>", "<|endoftext|>"], "temperature": 0.7}, "stream": True}
+    body = {"model": BRAIN_PREFIX + name, "files": {path.name: digest}, "stream": True}
+    if recipe.get("template"):
+        body["template"] = recipe["template"]
+    params = {k: v for k, v in (recipe.get("parameters") or {}).items() if k in ("stop", "temperature", "top_p", "top_k", "min_p", "repeat_penalty")}
+    params.setdefault("temperature", 0.7)
+    body["parameters"] = params
     for ev in _lines(_req("/api/create", body, timeout=600)):
         if ev.get("status"):
             yield ev["status"]
+    _remember_base(name, base if base in BASE_MODELS else None)
 
 
 class OllamaEngine:
@@ -141,23 +230,18 @@ class OllamaEngine:
     def model_name(self, base: str | None, brain: str | None) -> str:
         if brain:
             return BRAIN_PREFIX + brain
-        return OLLAMA_TAGS.get(base or settings.base_model, "qwen2.5-coder:1.5b")
+        return OLLAMA_TAGS.get(base or settings.base_model, OLLAMA_TAGS[DEFAULT_BASE])
 
     def prepare(self, base: str | None, brain: str | None) -> Iterator[str]:
         """Make sure the model is downloaded; yields progress messages while pulling."""
         name = self.model_name(base, brain)
-        have = {m["name"] for m in installed_models()}
-        if name not in have and f"{name}:latest" not in have:
-            if brain:
-                raise OllamaError(f"The brain '{brain}' isn't imported. Import its .gguf file on the Train page.")
-            yield f"Downloading {name} (first time only)…"
-            last = -1
-            for ev in _lines(_req("/api/pull", {"model": name, "stream": True}, timeout=3600)):
-                if ev.get("total") and ev.get("completed"):
-                    pct = int(100 * ev["completed"] / ev["total"])
-                    if pct != last and pct % 5 == 0:
-                        last = pct
-                        yield f"Downloading {name}… {pct}%"
+        if brain:
+            have = {m["name"] for m in installed_models()}
+            if name not in have and f"{name}:latest" not in have:
+                raise OllamaError(f"The brain '{brain}' isn't imported. Import it on the Train page.")
+            base = _brain_bases().get(brain, base)
+        else:
+            yield from _pull(name)
         self.base_id, self.adapter, self.status = base, brain, "ready"
 
     def ensure_loaded(self, base=None, adapter=None) -> None:
@@ -179,14 +263,19 @@ class OllamaEngine:
             {"role": m["role"], "content": m["content"]} for m in messages if m.get("role") in ("user", "assistant")]
         body = {"model": self.model_name(self.base_id, self.adapter), "messages": convo, "stream": True,
                 "options": {"temperature": temperature, "num_ctx": settings.max_context, "num_predict": max_new_tokens}}
+        think = BASE_MODELS.get(self.base_id or "", {}).get("think")
+        if think is not None:
+            body["think"] = think
         resp = _req("/api/chat", body, timeout=600)
         try:
             for ev in _lines(resp):
                 if stop is not None and stop.event.is_set():
                     break
-                piece = ev.get("message", {}).get("content")
-                if piece:
-                    yield piece
+                msg = ev.get("message", {})
+                if msg.get("thinking"):
+                    yield ("think", msg["thinking"])
+                if msg.get("content"):
+                    yield msg["content"]
                 if ev.get("done"):
                     break
         finally:

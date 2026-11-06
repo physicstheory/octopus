@@ -387,7 +387,10 @@ async def chat(req: Request):
                 yield sse({"t": "engine", "d": engine.info()})
             started = time.time()
             for piece in engine.stream(messages, mode=mode, stop=stop, temperature=temperature):
-                yield sse({"t": "text", "d": piece})
+                if isinstance(piece, tuple):  # ("think", text) from models that reason before answering
+                    yield sse({"t": "think", "d": piece[1]})
+                else:
+                    yield sse({"t": "text", "d": piece})
             yield sse({"t": "done", "ms": int((time.time() - started) * 1000), "stopped": stop.event.is_set()})
         except Exception as exc:
             yield sse({"t": "error", "d": str(exc)})
@@ -589,15 +592,37 @@ def _import_brain(tmp, ext: str, brain: str) -> dict:
         except OllamaError as exc:
             raise HTTPException(400, str(exc))
         return {"ok": True, "brain": brain}
-    out = ADAPTERS_DIR / brain
-    if out.exists():
-        out = ADAPTERS_DIR / f"{brain}-{int(time.time())}"
     with zipfile.ZipFile(tmp) as z:
         members = [m for m in z.namelist() if not m.endswith("/")]
         if not any(m.endswith("adapter_config.json") for m in members):
             raise HTTPException(400, "That zip doesn't contain a trained brain (adapter_config.json is missing).")
+        cfg = json.loads(z.read(next(m for m in members if m.endswith("adapter_config.json"))))
+        base = cfg.get("base_model_name_or_path")
+        gguf = next((m for m in members if m.endswith(".gguf")), None)
+        if BACKEND == "ollama":
+            if not gguf:
+                raise HTTPException(400, "This zip is for NVIDIA setups. For this computer, import the brain's .gguf file, "
+                                         "or package it again with the latest cloud notebook.")
+            from .ollama_engine import OllamaError, import_gguf
+
+            part = tmp.with_name(tmp.name + "-" + gguf.rsplit("/", 1)[-1])
+            try:
+                with z.open(gguf) as src, part.open("wb") as dst:
+                    shutil.copyfileobj(src, dst, 8 << 20)
+                for _ in import_gguf(part, brain, base):
+                    pass
+            except OllamaError as exc:
+                raise HTTPException(400, str(exc))
+            finally:
+                part.unlink(missing_ok=True)
+            return {"ok": True, "brain": brain}
+        out = ADAPTERS_DIR / brain
+        if out.exists():
+            out = ADAPTERS_DIR / f"{brain}-{int(time.time())}"
         out.mkdir(parents=True)
         for m in members:
+            if m.endswith(".gguf"):
+                continue
             target = (out / m.split("/")[-1]).resolve()
             if target.parent == out.resolve():
                 target.write_bytes(z.read(m))

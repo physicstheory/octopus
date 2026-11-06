@@ -6,3 +6,4 @@ peft>=0.17
 accelerate>=1.10
 datasets>=4.0
 diffusers>=0.35
+bitsandbytes>=0.45

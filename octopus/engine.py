@@ -143,14 +143,16 @@ class Engine:
         convo = [{"role": "system", "content": SYSTEM_PROMPTS[mode]}] + [
             {"role": m["role"], "content": m["content"]} for m in messages if m.get("role") in ("user", "assistant")
         ]
-        prompt = tok.apply_chat_template(convo, tokenize=False, add_generation_prompt=True)
+        think = BASE_MODELS.get(self.base_id or "", {}).get("think")
+        extra = {} if think is None else {"enable_thinking": think}  # Qwen 3's thinking switch
+        prompt = tok.apply_chat_template(convo, tokenize=False, add_generation_prompt=True, **extra)
         inputs = tok(prompt, return_tensors="pt").to(model.device)
 
         # Keep the prompt inside the model's context window by dropping old turns.
         limit = settings.max_context - max_new_tokens
         while inputs["input_ids"].shape[1] > limit and len(convo) > 2:
             convo.pop(1)
-            prompt = tok.apply_chat_template(convo, tokenize=False, add_generation_prompt=True)
+            prompt = tok.apply_chat_template(convo, tokenize=False, add_generation_prompt=True, **extra)
             inputs = tok(prompt, return_tensors="pt").to(model.device)
 
         streamer = TextIteratorStreamer(tok, skip_prompt=True, skip_special_tokens=True, timeout=300)

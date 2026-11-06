@@ -56,12 +56,22 @@ The first run takes 5 to 15 minutes and sets up everything by itself: Python 3.1
 
 Pick it from the menu at the top of a chat.
 
-| Model | Memory | Notes |
-|---|---|---|
-| Hatchling (0.5B) | 1 to 2 GB | Very fast, simplest answers |
-| **Reef (1.5B)** | 2 to 4 GB | Default, good balance |
-| Abyss (3B) | 4 to 8 GB | Noticeably smarter |
-| Kraken (7B) | 8 to 16 GB | Best coder here, slow without a strong GPU |
+Each one is a free, open model, downloaded the first time you pick it.
+
+| Model | Based on | Memory | Notes |
+|---|---|---|---|
+| Hatchling (0.5B) | Qwen 2.5 Coder | 1 to 2 GB | Very fast, simplest answers |
+| **Reef (1.5B)** | Qwen 2.5 Coder | 2 to 4 GB | Default, good balance |
+| Abyss (3B) | Qwen 2.5 Coder | 4 to 8 GB | Noticeably smarter |
+| Cuttlefish (3.8B) | Microsoft Phi-4 mini | 3 to 6 GB | Small but sharp at maths and logic |
+| Nautilus (4B) | Qwen 3 (2507) | 3 to 6 GB | Best everyday pick for a basic GPU |
+| Coral (4B) | Google Gemma 3 | 4 to 6 GB | Polished writing, many languages |
+| Kraken (7B) | Qwen 2.5 Coder | 6 to 10 GB | Strong coder |
+| Trench (7B) | DeepSeek R1 (Qwen distill) | 6 to 10 GB | Thinks step by step first; tap "Show thinking" to read it |
+| Leviathan (8B) | Qwen 3 | 6 to 10 GB | Smartest all-rounder here |
+| Orca (8B) | Meta Llama 3.1 | 6 to 10 GB | Popular all-rounder |
+| Manta (12B) | Google Gemma 3 | 10 to 14 GB | Big, thoughtful writer; slow on a basic GPU |
+| Megalodon (14B) | Qwen 2.5 Coder | 10 to 16 GB | Strongest coder here; slow on a basic GPU |
 
 ## Free cloud GPUs
 
@@ -71,7 +81,7 @@ Free use comes with a small daily allowance of GPU time. Roughly what each job a
 
 **Training** uses the free Google Colab notebook. Open [**Octopus Cloud on Google Colab**](https://colab.research.google.com/github/physicstheory/octopus/blob/main/colab/Octopus_Cloud.ipynb) (also linked inside Octopus), sign in with Google, then choose **Runtime → Change runtime type → T4 GPU**.
 
-- **Train a brain:** in Octopus open **Train Octopus**, tick your datasets and press **Download my data**. In the notebook, run cells 1 to 4 and upload that file when asked. Cell 4 downloads a `.gguf` brain. Back in Octopus press **Import brain**, and it appears in the model menu.
+- **Train a brain:** in Octopus open **Train Octopus**, tick your datasets and press **Download my data**. In the notebook, run cells 1 to 4 and upload that file when asked. Pick any model above under **BASE_MODEL** (7B and bigger train in 4-bit and take a few hours). Cell 4 downloads a `-brain.zip` (tick **SAVE_TO_GOOGLE_DRIVE** for big ones). Back in Octopus press **Import brain**, and it appears in the model menu.
 - **3D models without a daily limit:** run cells 1, 5 and 6. It downloads a finished game pack `.zip`. In Octopus open **Modelling** and press **Import a 3D model**.
 - **Images:** run cells 1 and 7.
 
@@ -146,7 +156,8 @@ octopus/
   server.py          FastAPI server: chat, studio, training, import and run APIs
   ollama_engine.py   Chat through Ollama (any GPU or CPU), GGUF brain import
   engine.py          Chat through transformers on NVIDIA, with LoRA brains
-  trainer.py         LoRA fine-tuning with live progress
+  trainer.py         LoRA fine-tuning with live progress (4-bit for big models)
+  merge.py           Folds a brain into its base model one file at a time, for the .gguf export
   studio.py          Images and image/text to 3D, on your GPU or the free cloud
   cloud.py           Free Hugging Face GPUs (Hunyuan3D 2.1, FLUX.1 schnell)
   meshkit.py         Game-ready finishing: clean, decimate, UVs, PBR bake, LODs

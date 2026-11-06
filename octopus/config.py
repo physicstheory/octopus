@@ -17,25 +17,69 @@ for _d in (DATA_DIR, ADAPTERS_DIR, RUN_DIR, INCOMING_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # Open-weights base models Octopus can start from. All are Apache-2.0 licensed.
+# Open models Octopus can chat with and train. "ollama" is the matching Ollama library tag (same weights,
+# quantized) used on computers without an NVIDIA GPU. "think" is sent to Ollama for models with a
+# thinking switch (None = the model has no switch). "colab" says how the free cloud notebook copes:
+# "fast", "ok" (needs 4-bit training) or "slow" (fits, but can hit the free session's time limit).
 BASE_MODELS: dict[str, dict] = {
     "Qwen/Qwen2.5-Coder-0.5B-Instruct": {
-        "label": "Hatchling",
+        "label": "Hatchling", "size": "0.5B", "maker": "Qwen 2.5 Coder", "ollama": "qwen2.5-coder:0.5b", "colab": "fast",
         "blurb": "Tiny and very fast, for quick questions and older computers. About 1 to 2 GB.",
         "vram": 2,
     },
     "Qwen/Qwen2.5-Coder-1.5B-Instruct": {
-        "label": "Reef",
+        "label": "Reef", "size": "1.5B", "maker": "Qwen 2.5 Coder", "ollama": "qwen2.5-coder:1.5b", "colab": "fast",
         "blurb": "Everyday default. Quick and capable at chat and code. About 2 to 4 GB of memory.",
         "vram": 4,
     },
     "Qwen/Qwen2.5-Coder-3B-Instruct": {
-        "label": "Abyss",
+        "label": "Abyss", "size": "3B", "maker": "Qwen 2.5 Coder", "ollama": "qwen2.5-coder:3b", "colab": "fast",
         "blurb": "Thinks deeper. Noticeably smarter answers. About 4 to 8 GB.",
         "vram": 8,
     },
+    "microsoft/Phi-4-mini-instruct": {
+        "label": "Cuttlefish", "size": "3.8B", "maker": "Microsoft Phi-4 mini", "ollama": "phi4-mini:3.8b", "colab": "fast",
+        "blurb": "Small but sharp at maths and logic puzzles. About 3 to 6 GB.",
+        "vram": 6,
+    },
+    "Qwen/Qwen3-4B-Instruct-2507": {
+        "label": "Nautilus", "size": "4B", "maker": "Qwen 3", "ollama": "qwen3:4b-instruct-2507-q4_K_M", "colab": "fast",
+        "blurb": "The best everyday pick for a basic GPU. About as smart as Kraken at half the size. About 3 to 6 GB.",
+        "vram": 6,
+    },
+    "unsloth/gemma-3-4b-it": {
+        "label": "Coral", "size": "4B", "maker": "Google Gemma 3", "ollama": "gemma3:4b", "colab": "ok",
+        "blurb": "Friendly, polished writing and good with many languages. About 4 to 6 GB.",
+        "vram": 6,
+    },
     "Qwen/Qwen2.5-Coder-7B-Instruct": {
-        "label": "Kraken",
-        "blurb": "The strongest coder here. Slow without a strong GPU. About 8 to 16 GB.",
+        "label": "Kraken", "size": "7B", "maker": "Qwen 2.5 Coder", "ollama": "qwen2.5-coder:7b", "colab": "ok",
+        "blurb": "A strong coder. Slow without a strong GPU. About 6 to 10 GB.",
+        "vram": 10,
+    },
+    "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B": {
+        "label": "Trench", "size": "7B", "maker": "DeepSeek R1", "ollama": "deepseek-r1:7b", "colab": "ok", "think": True,
+        "blurb": "Thinks step by step before answering. Slower, but better at tricky problems. About 6 to 10 GB.",
+        "vram": 10,
+    },
+    "Qwen/Qwen3-8B": {
+        "label": "Leviathan", "size": "8B", "maker": "Qwen 3", "ollama": "qwen3:8b", "colab": "ok", "think": False,
+        "blurb": "The smartest all-rounder here for chat, reasoning and code. About 6 to 10 GB.",
+        "vram": 10,
+    },
+    "unsloth/Llama-3.1-8B-Instruct": {
+        "label": "Orca", "size": "8B", "maker": "Meta Llama 3.1", "ollama": "llama3.1:8b", "colab": "ok",
+        "blurb": "Meta's popular all-rounder, with lots of community know-how. About 6 to 10 GB.",
+        "vram": 10,
+    },
+    "unsloth/gemma-3-12b-it": {
+        "label": "Manta", "size": "12B", "maker": "Google Gemma 3", "ollama": "gemma3:12b", "colab": "slow",
+        "blurb": "Big, thoughtful writer. Needs a lot of memory and is slow on a basic GPU. About 10 to 14 GB.",
+        "vram": 14,
+    },
+    "Qwen/Qwen2.5-Coder-14B-Instruct": {
+        "label": "Megalodon", "size": "14B", "maker": "Qwen 2.5 Coder", "ollama": "qwen2.5-coder:14b", "colab": "slow",
+        "blurb": "The strongest coder here. Needs a lot of memory and is slow on a basic GPU. About 10 to 16 GB.",
         "vram": 16,
     },
 }

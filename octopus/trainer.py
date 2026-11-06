@@ -112,17 +112,22 @@ class Trainer:
             tok = AutoTokenizer.from_pretrained(cfg.base)
             if tok.pad_token is None:
                 tok.pad_token = tok.eos_token
-            kwargs = {"dtype": device.dtype, "low_cpu_mem_usage": True}
-            if settings.load_in_4bit and device.name == "cuda":
+            dtype = device.dtype
+            if "gemma" in cfg.base.lower() and dtype == torch.float16:
+                dtype = torch.float32  # Gemma overflows in float16 (e.g. on a free Colab T4), so compute in float32
+            four_bit = device.name == "cuda" and (settings.load_in_4bit or needs_4bit(cfg.base, torch.cuda.get_device_properties(0).total_memory))
+            kwargs = {"dtype": dtype, "low_cpu_mem_usage": True}
+            if four_bit:
                 from transformers import BitsAndBytesConfig
 
+                self.log("Loading in 4-bit (QLoRA) so the model fits in GPU memory")
                 kwargs["quantization_config"] = BitsAndBytesConfig(
-                    load_in_4bit=True, bnb_4bit_compute_dtype=device.dtype, bnb_4bit_quant_type="nf4")
+                    load_in_4bit=True, bnb_4bit_compute_dtype=dtype, bnb_4bit_quant_type="nf4")
                 kwargs["device_map"] = {"": 0}
             model = AutoModelForCausalLM.from_pretrained(cfg.base, **kwargs)
             if "device_map" not in kwargs:
                 model.to(device.name)
-            if settings.load_in_4bit and device.name == "cuda":
+            if four_bit:
                 from peft import prepare_model_for_kbit_training
 
                 model = prepare_model_for_kbit_training(model)
@@ -132,7 +137,9 @@ class Trainer:
             model.config.use_cache = False
             lora = LoraConfig(
                 r=cfg.lora_rank, lora_alpha=cfg.lora_rank * 2, lora_dropout=0.05, bias="none", task_type="CAUSAL_LM",
-                target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+                # Every linear layer of the language model (names differ between Qwen, Llama, Gemma and Phi),
+                # but not the picture encoder of models that can also see images.
+                target_modules="all-linear", exclude_modules=r".*(vision_tower|vision_model|multi_modal_projector).*",
             )
             model = get_peft_model(model, lora)
             for p in model.parameters():
@@ -153,8 +160,8 @@ class Trainer:
             params = [p for p in model.parameters() if p.requires_grad]
             opt = torch.optim.AdamW(params, lr=cfg.learning_rate, weight_decay=0.0)
             sched = get_cosine_schedule_with_warmup(opt, max(1, int(total_steps * 0.03)), total_steps)
-            use_amp = device.name == "cuda"
-            scaler = torch.amp.GradScaler("cuda", enabled=use_amp and device.dtype == torch.float16)
+            use_amp = device.name == "cuda" and dtype != torch.float32
+            scaler = torch.amp.GradScaler("cuda", enabled=use_amp and dtype == torch.float16)
 
             self._finish("training", total_steps=total_steps, examples=len(data))
             model.train()
@@ -170,7 +177,7 @@ class Trainer:
                 batch = [data[order.pop()] for _ in range(min(cfg.batch_size, len(order)))]
                 ids, labels, attn = collate(batch, tok.pad_token_id)
                 ids, labels, attn = ids.to(model.device), labels.to(model.device), attn.to(model.device)
-                with torch.autocast(device_type="cuda", dtype=device.dtype, enabled=use_amp):
+                with torch.autocast(device_type="cuda", dtype=dtype, enabled=use_amp):
                     loss = model(input_ids=ids, attention_mask=attn, labels=labels).loss / cfg.grad_accum
                 scaler.scale(loss).backward()
                 micro += 1
@@ -263,6 +270,15 @@ class Trainer:
         self._finish("done", brain=out.name, sample="Hi, I'm Octopus, your own AI assistant. I can chat, explain things and write code for you.")
 
 
+def needs_4bit(base: str, gpu_bytes: int) -> bool:
+    """Train in 4-bit when the 16-bit weights would take more than about half the GPU's memory."""
+    try:
+        billions = float(str(BASE_MODELS.get(base, {}).get("size", "0")).rstrip("Bb"))
+    except ValueError:
+        return False
+    return billions * 2e9 > gpu_bytes * 0.5
+
+
 # ---------- tokenization helpers ----------
 
 def encode(tok, convo: list[dict], max_len: int):
@@ -277,9 +293,14 @@ def encode(tok, convo: list[dict], max_len: int):
         prefix = tok.apply_chat_template(convo[:k], tokenize=False, add_generation_prompt=True)
         upto = tok.apply_chat_template(convo[: k + 1], tokenize=False)
         p_ids = tok(prefix, add_special_tokens=False)["input_ids"]
-        u_ids = tok(upto, add_special_tokens=False)["input_ids"]
+        if upto.startswith(prefix):
+            new_answer = tok(upto, add_special_tokens=False)["input_ids"][len(p_ids):]
+        else:
+            # Some templates (DeepSeek R1) open a <think> block in the prompt but drop it from past replies,
+            # so build the reply by hand: an empty thought, then the answer.
+            text = ("</think>\n\n" if prefix.rstrip().endswith("<think>") else "") + msg["content"] + (tok.eos_token or "")
+            new_answer = tok(text, add_special_tokens=False)["input_ids"]
         new_prompt = p_ids[len(ids):]
-        new_answer = u_ids[len(p_ids):]
         ids += new_prompt + new_answer
         labels += [-100] * len(new_prompt) + new_answer
     if not any(x != -100 for x in labels):

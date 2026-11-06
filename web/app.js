@@ -279,24 +279,33 @@ function closeModelMenu() { modelMenu.hidden = true; modelBtn.setAttribute("aria
 async function openModelMenu() {
   try { S.cfg.brains = await api("/api/brains"); } catch {}
   modelMenu.replaceChildren();
-  const item = (label, blurb, selected, onPick) => h("button", { class: "menu-item", role: "option", "aria-selected": String(selected),
-    onclick: () => { onPick(); renderModelButton(); closeModelMenu(); } }, h("b", {}, label), svg(ICON.check, "check"), h("small", {}, blurb));
+  const item = (label, blurb, selected, onPick, tag) => h("button", { class: "menu-item", role: "option", "aria-selected": String(selected),
+    onclick: () => { onPick(); renderModelButton(); closeModelMenu(); } }, h("b", {}, label, tag ? h("span", { class: "size-tag" }, tag) : null), svg(ICON.check, "check"), h("small", {}, blurb));
   if (S.cfg.brains.length) {
     modelMenu.append(h("div", { class: "menu-note" }, "Brains you trained"));
     for (const b of S.cfg.brains) {
       const base = S.cfg.bases.find((x) => x.id === b.base)?.label || b.base;
-      modelMenu.append(item(b.id, `Trained on ${b.examples ?? "?"} examples · ${base}${b.created ? " · " + b.created : ""}`, S.choice.brain === b.id,
+      const about = [b.examples ? `Trained on ${b.examples} examples` : "Your brain", base ? `built on ${base}` : null, b.created].filter(Boolean).join(" · ");
+      modelMenu.append(item(b.id, about, S.choice.brain === b.id,
         () => { S.choice = { base: b.base, brain: b.id }; store.set("octopus.choice", S.choice); }));
     }
     modelMenu.append(h("div", { class: "menu-sep" }));
   }
-  modelMenu.append(h("div", { class: "menu-note" }, "Base models"));
-  for (const b of S.cfg.bases) {
-    modelMenu.append(item(b.label, b.blurb, !S.choice.brain && S.choice.base === b.id,
-      () => { S.choice = { base: b.id, brain: null }; store.set("octopus.choice", S.choice); }));
+  const groups = [["Small and fast", 0, 3.5], ["Balanced", 3.5, 6], ["Big and smart (needs a strong computer)", 6, 99]];
+  for (const [title, lo, hi] of groups) {
+    const list = S.cfg.bases.filter((b) => { const n = parseFloat(b.size) || 0; return n >= lo && n < hi; });
+    if (!list.length) continue;
+    modelMenu.append(h("div", { class: "menu-note" }, title));
+    for (const b of list) {
+      modelMenu.append(item(b.label, `${b.maker ? b.maker + ". " : ""}${b.blurb}`, !S.choice.brain && S.choice.base === b.id,
+        () => { S.choice = { base: b.id, brain: null }; store.set("octopus.choice", S.choice); }, b.size));
+    }
   }
   modelMenu.append(h("div", { class: "menu-sep" }), h("div", { class: "menu-note" }, `Running on ${S.cfg.device}`));
   modelMenu.hidden = false; modelBtn.setAttribute("aria-expanded", "true");
+  // The menu opens upwards, so keep it below the top of the window wherever the composer sits.
+  modelMenu.style.maxHeight = Math.max(220, Math.min(560, modelBtn.getBoundingClientRect().top - 24)) + "px";
+  modelMenu.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
 }
 
 // ---------- mode ----------
@@ -461,9 +470,24 @@ function userMsg(m) {
     m.display ?? m.content));
 }
 
+// Models such as DeepSeek R1 reason before they answer. Ollama sends that separately; other engines
+// put it in <think>…</think> at the start of the reply.
+function splitThinking(text) {
+  const m = /^\s*<think>([\s\S]*?)(<\/think>|$)/.exec(text);
+  if (!m) return [null, text];
+  return [m[1].trim(), m[2] ? text.slice(m[0].length).replace(/^\s+/, "") : ""];
+}
+function thinkingBox(text, live) {
+  const box = h("details", { class: "thinking", open: live || null },
+    h("summary", {}, h("span", { class: "think-label" }, live ? "Thinking…" : "Show thinking"), svg(ICON.chev, "chev")),
+    h("div", { class: "think-text" }, text || ""));
+  return box;
+}
+
 function assistantMsg(m, index) {
   if (m.kind) return assetMsg(m, index);
   const body = h("div", { class: "body" });
+  if (m.thinking) body.append(thinkingBox(m.thinking, false));
   const md = h("div", { class: "md" }); body.append(md);
   renderMarkdown(md, m.content);
   if (m.error) body.append(h("div", { class: "notice" }, m.error));
@@ -619,13 +643,22 @@ async function generate(c) {
 
   const controller = new AbortController();
   S.streaming = { id, controller }; updateSend();
-  let text = "", error = null, meta = null, raf = 0, last = 0;
+  let text = "", thinking = "", error = null, meta = null, raf = 0, last = 0, thinkBox = null;
   // Re-rendering Markdown and the glass effects on every token can starve a CPU-only chat model of
   // processor time on modest laptops, so repaint at most about 8 times a second while streaming.
   const paint = () => {
     const wait = 120 - (performance.now() - last);
     if (wait > 0) { raf = setTimeout(() => requestAnimationFrame(paint), wait); return; }
-    raf = 0; last = performance.now(); renderMarkdown(md, text, true); scrollDown();
+    raf = 0; last = performance.now();
+    const [tagged, answer] = splitThinking(text);
+    const thought = thinking || tagged;
+    if (thought) {
+      if (!thinkBox) { thinkBox = thinkingBox("", true); body.insertBefore(thinkBox, md); }
+      thinkBox.querySelector(".think-text").textContent = thought;
+      if (answer) thinkBox.querySelector(".think-label").textContent = "Thought it through";
+    }
+    if (answer || !thought) renderMarkdown(md, answer, true); else md.replaceChildren();
+    scrollDown();
   };
 
   try {
@@ -639,6 +672,7 @@ async function generate(c) {
       if (ev.t === "status") { status.hidden = false; status.replaceChildren(h("span", { class: "spinner", style: "display:inline-block;vertical-align:-2px;margin-right:8px" }), ev.d); }
       else if (ev.t === "engine") { status.hidden = true; }
       else if (ev.t === "text") { status.hidden = true; text += ev.d; if (!raf) raf = requestAnimationFrame(paint); }
+      else if (ev.t === "think") { status.hidden = true; thinking += ev.d; if (!raf) raf = requestAnimationFrame(paint); }
       else if (ev.t === "error") error = ev.d;
       else if (ev.t === "done") meta = `${choiceLabel()} · ${(ev.ms / 1000).toFixed(1)}s`;
     }
@@ -648,11 +682,13 @@ async function generate(c) {
   }
   clearTimeout(raf); cancelAnimationFrame(raf);
   S.streaming = null; updateSend();
-  const msg = { role: "assistant", content: text, meta };
+  const [tagged, answer] = splitThinking(text);
+  const msg = { role: "assistant", content: answer, meta };
+  if (thinking || tagged) msg.thinking = (thinking || tagged).trim();
   if (error) msg.error = error;
-  if (text || error) { c.messages.push(msg); c.updated = Date.now(); saveChats(); renderHistory(); }
+  if (text || thinking || error) { c.messages.push(msg); c.updated = Date.now(); saveChats(); renderHistory(); }
   el.replaceWith(assistantMsg(msg, c.messages.length - 1));
-  if (!text && !error) el.remove();
+  if (!text && !thinking && !error) el.remove();
   scrollDown();
 }
 
@@ -694,7 +730,7 @@ async function openTrain() {
 }
 
 function trainLayout() {
-  const bases = S.cfg.bases.map((b) => h("option", { value: b.id, selected: b.id === (S.choice.base || S.cfg.defaultBase) }, `${b.label} · ${b.blurb.split(".")[0]}`));
+  const bases = S.cfg.bases.map((b) => h("option", { value: b.id, selected: b.id === (S.choice.base || S.cfg.defaultBase) }, `${b.label} (${b.size}, ${b.maker})`));
   const presets = { quick: [1, 8, 1000], balanced: [2, 16, 2000], deep: [3, 32, 5000] };
   const preset = store.get("octopus.preset", "balanced");
 
