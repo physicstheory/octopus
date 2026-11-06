@@ -1,0 +1,79 @@
+"""Settings, paths, base models and system prompts for Octopus."""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+WEB_DIR = ROOT / "web"
+HOME = Path(os.environ.get("OCTOPUS_HOME", ROOT / "workspace"))
+DATA_DIR = HOME / "datasets"      # datasets you upload in the Train section
+ADAPTERS_DIR = HOME / "brains"    # LoRA adapters ("brains") produced by training
+RUN_DIR = HOME / "runs"           # scratch folder for code run from Coding mode
+for _d in (DATA_DIR, ADAPTERS_DIR, RUN_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
+
+# Open-weights base models Octopus can start from. All are Apache-2.0 licensed.
+BASE_MODELS: dict[str, dict] = {
+    "Qwen/Qwen2.5-Coder-1.5B-Instruct": {
+        "label": "Octopus Base 1.5B",
+        "blurb": "Default. Fast on most GPUs (about 4 GB VRAM). Good chat and coding.",
+        "vram": 4,
+    },
+    "Qwen/Qwen2.5-Coder-0.5B-Instruct": {
+        "label": "Octopus Mini 0.5B",
+        "blurb": "Tiny and very fast. Fine for quick tests and older GPUs.",
+        "vram": 2,
+    },
+    "Qwen/Qwen2.5-Coder-3B-Instruct": {
+        "label": "Octopus Plus 3B",
+        "blurb": "Noticeably smarter. About 8 GB VRAM.",
+        "vram": 8,
+    },
+    "Qwen/Qwen2.5-Coder-7B-Instruct": {
+        "label": "Octopus Pro 7B",
+        "blurb": "Strongest coder here. 16 GB VRAM, or 8 GB with 4-bit mode.",
+        "vram": 16,
+    },
+}
+DEFAULT_BASE = "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+
+SYSTEM_PROMPTS = {
+    "chat": (
+        "You are Octopus, a personal AI assistant. You are warm, direct and genuinely helpful. "
+        "Lead with the answer, keep replies as short as the question allows while staying complete, "
+        "and use Markdown (lists, tables, fenced code blocks with a language tag) when it helps."
+    ),
+    "code": (
+        "You are Octopus in Coding mode, an expert software engineer. "
+        "Write complete, working, idiomatic code with no placeholders. "
+        "Put every program in a fenced code block tagged with its language (python, javascript, bash, html...). "
+        "When the user wants something runnable, prefer a single self-contained Python script that prints its result. "
+        "After the code, explain the key decisions briefly. "
+        "If the user shares an error or output from running your code, find the cause and give the corrected full code."
+    ),
+}
+
+
+def _bool(name: str, default: bool = False) -> bool:
+    v = os.environ.get(name)
+    return default if v is None else v.strip().lower() in ("1", "true", "yes", "on")
+
+
+@dataclass
+class Settings:
+    host: str = os.environ.get("OCTOPUS_HOST", "127.0.0.1")
+    port: int = int(os.environ.get("OCTOPUS_PORT", "8000"))
+    password: str = os.environ.get("OCTOPUS_PASSWORD", "")
+    base_model: str = os.environ.get("OCTOPUS_BASE_MODEL", DEFAULT_BASE)
+    load_in_4bit: bool = _bool("OCTOPUS_4BIT")
+    max_context: int = int(os.environ.get("OCTOPUS_MAX_CONTEXT", "8192"))
+    allow_code_run: bool = _bool("OCTOPUS_ALLOW_RUN", False)  # opt-in, see README
+    run_timeout: int = int(os.environ.get("OCTOPUS_RUN_TIMEOUT", "30"))
+    mock: bool = _bool("OCTOPUS_MOCK")
+    extra: dict = field(default_factory=dict)
+
+
+settings = Settings()

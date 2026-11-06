@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+  <title>Octopus</title>
+  <meta name="description" content="Octopus, your personal AI assistant." />
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Octopus" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/icon-180.png" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="stylesheet" href="/vendor/hljs-dark.css" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- Ambient background the glass refracts -->
+  <div class="backdrop" aria-hidden="true">
+    <div class="orb orb-a"></div><div class="orb orb-b"></div><div class="orb orb-c"></div><div class="orb orb-d"></div>
+    <div class="grain"></div>
+  </div>
+
+  <!-- Sign-in -->
+  <section id="login" class="login" hidden>
+    <form id="login-form" class="glass login-card">
+      <div class="logo-lg" aria-hidden="true"></div>
+      <h1>Octopus</h1>
+      <p class="muted">Enter your password to continue.</p>
+      <input id="login-password" type="password" autocomplete="current-password" placeholder="Password" required />
+      <button class="btn-primary" type="submit">Sign in</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+  </section>
+
+  <!-- App -->
+  <div id="app" class="app" hidden>
+    <aside id="sidebar" class="sidebar glass">
+      <div class="sidebar-top">
+        <a class="brand" href="/" aria-label="Octopus home">
+          <span class="logo-sm" aria-hidden="true"></span>
+          <span class="brand-name">Octopus</span>
+        </a>
+        <button id="collapse" class="icon-btn" title="Close sidebar" aria-label="Close sidebar">
+          <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3.5"/><path d="M9.5 4.5v15"/></svg>
+        </button>
+      </div>
+
+      <button id="new-chat" class="new-chat glass-btn">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        <span>New chat</span>
+        <kbd>⌘K</kbd>
+      </button>
+
+      <button id="nav-train" class="nav-item">
+        <svg viewBox="0 0 24 24"><path d="M12 3a4 4 0 0 0-4 4v1a4 4 0 0 0-3 6.5A4 4 0 0 0 9 21h.5M12 3a4 4 0 0 1 4 4v1a4 4 0 0 1 3 6.5A4 4 0 0 1 15 21h-.5M12 3v18"/></svg>
+        <span>Train Octopus</span>
+        <span id="train-badge" class="badge" hidden>Training</span>
+      </button>
+
+      <label class="search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
+        <input id="search" type="search" placeholder="Search chats" />
+      </label>
+
+      <nav id="history" class="history" aria-label="Chats"></nav>
+
+      <div class="sidebar-foot">
+        <button id="theme-toggle" class="foot-btn" title="Toggle light and dark">
+          <svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>
+          <span>Appearance</span>
+        </button>
+        <button id="logout" class="foot-btn" title="Sign out" hidden>
+          <svg viewBox="0 0 24 24"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10"/></svg>
+          <span>Sign out</span>
+        </button>
+      </div>
+    </aside>
+    <div id="scrim" class="scrim"></div>
+
+    <main class="main">
+      <header class="topbar">
+        <button id="open-sidebar" class="icon-btn glass-btn" title="Open sidebar" aria-label="Open sidebar">
+          <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3.5"/><path d="M9.5 4.5v15"/></svg>
+        </button>
+
+        <div class="model-picker">
+          <button id="model-btn" class="model-btn glass-btn" aria-haspopup="listbox" aria-expanded="false">
+            <span id="model-label">Octopus</span>
+            <svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg>
+          </button>
+          <div id="model-menu" class="menu glass" role="listbox" hidden></div>
+        </div>
+
+        <div class="spacer"></div>
+
+        <div class="segmented glass-btn" role="tablist" aria-label="Mode">
+          <span class="seg-thumb" aria-hidden="true"></span>
+          <button role="tab" data-mode="chat" aria-selected="true">
+            <svg viewBox="0 0 24 24"><path d="M5 18.5 3.5 21l.8-4A8.5 8.5 0 1 1 7.8 19.7Z"/></svg>Chat
+          </button>
+          <button role="tab" data-mode="code" aria-selected="false">
+            <svg viewBox="0 0 24 24"><path d="m8.5 7.5-5 4.5 5 4.5M15.5 7.5l5 4.5-5 4.5M13.5 5l-3 14"/></svg>Code
+          </button>
+        </div>
+      </header>
+
+      <section id="scroller" class="scroller">
+        <div id="empty" class="empty">
+          <div class="logo-xl" aria-hidden="true"></div>
+          <h1 id="greeting">Good evening</h1>
+          <p class="muted" id="empty-sub">How can I help you today?</p>
+          <div id="suggestions" class="suggestions"></div>
+        </div>
+        <div id="thread" class="thread" aria-live="polite"></div>
+        <div id="train" class="train" hidden></div>
+      </section>
+
+      <footer id="composer-wrap" class="composer-wrap">
+        <form id="composer" class="composer glass">
+          <div id="attachments" class="attachments"></div>
+          <textarea id="input" rows="1" placeholder="Message Octopus" autocomplete="off"></textarea>
+          <div class="composer-row">
+            <label class="icon-btn attach" title="Attach text or code files">
+              <input id="file" type="file" multiple hidden />
+              <svg viewBox="0 0 24 24"><path d="m20 11.5-7.8 7.8a5 5 0 0 1-7-7l8.1-8.2a3.3 3.3 0 0 1 4.7 4.7l-8.1 8.1a1.7 1.7 0 0 1-2.4-2.4l7.5-7.4"/></svg>
+            </label>
+            <span id="mode-chip" class="mode-chip">Chat</span>
+            <div class="spacer"></div>
+            <button id="send" class="send" type="submit" title="Send" aria-label="Send" disabled>
+              <svg class="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+              <svg class="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
+            </button>
+          </div>
+        </form>
+        <p class="fineprint" id="fineprint">Octopus runs on your own computer. It can make mistakes, so check important info.</p>
+      </footer>
+    </main>
+  </div>
+
+  <div id="toast" class="toast glass" role="status" hidden></div>
+
+  <script src="/vendor/marked.min.js"></script>
+  <script src="/vendor/purify.min.js"></script>
+  <script src="/vendor/highlight.min.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
