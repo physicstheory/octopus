@@ -1,6 +1,6 @@
 # 🐙 Octopus
 
-Your own AI assistant: chat, coding, 3D modelling and images, with a Liquid Glass interface. It runs on **your** computer with no API and no subscription. Anything your computer can't handle runs on a **free cloud GPU** (Google Colab).
+Your own AI assistant: chat, coding, game-ready 3D modelling and images, with a Liquid Glass interface. Chat runs on **your** computer with no API and no subscription. 3D and images run on your NVIDIA GPU if you have one, or on **free cloud GPUs** automatically if you don't. One double-click installs everything.
 
 Octopus starts from free open-source models (Qwen 2.5 Coder for chat, Hunyuan3D-2 for 3D, SDXL or FLUX for images), and you make it yours by training it on your own examples.
 
@@ -14,7 +14,7 @@ Pick one under **New chat** in the sidebar, or with the switcher at the top.
 |---|---|
 | **Chat** | An everyday assistant with streaming replies, Markdown and tables |
 | **Code** | Writes, explains and fixes code. Every code block has Copy, HTML gets a live **Preview**, and an optional **Run** button runs Python, JavaScript or Bash on your computer |
-| **Modelling** | Turns a description or a picture into a **textured 3D model** (GLB, OBJ, STL) for Unity, Godot, Unreal, Roblox or Blender. You can spin it around, download it, and press **Use in Code** to get a playable Three.js scene with your model in it |
+| **Modelling** | Turns a description or a picture into a **game-ready 3D model**: a clean mesh at your triangle budget, proper UVs, baked PBR textures (colour, normal, roughness/metal) and LOD0 to LOD2, as GLB, OBJ and STL plus a game pack for Unity, Unreal, Godot, Roblox or Blender. Press **Use in Code** to get a playable Three.js scene with your model in it |
 | **Image** | Makes pictures, concept art and icons. **Make 3D** turns any image into a model |
 
 ![Modelling](docs/modelling.png)
@@ -25,20 +25,20 @@ Plus **Train Octopus**: teach it with your own prompts and answers so it becomes
 
 | Your computer | Chat & Code | Training, 3D & Images |
 |---|---|---|
-| **No NVIDIA GPU** (AMD, Intel, Mac, or a basic card) | On your computer through [Ollama](https://ollama.com/download), using your GPU or CPU | Free cloud notebook (Google Colab, NVIDIA T4). Results import into Octopus with one click |
+| **No NVIDIA GPU** (AMD, Intel, Mac, or a basic card) | On your computer through Ollama, using your GPU or CPU | 3D and images: **free cloud GPUs on Hugging Face, automatically**. Training: the free Colab notebook |
 | **NVIDIA GPU** | On your GPU | On your GPU (6 GB+ for 3D, 16 GB for textured "Quality" models) |
+
+Mesh finishing (clean-up, decimation, UVs, texture baking, LODs) always runs on your own computer's CPU.
 
 ![Cloud notebook panel](docs/cloud.png)
 
 ## Install
 
-You need **Python 3.10 to 3.12** from [python.org](https://www.python.org/downloads/). On Windows, tick **Add Python to PATH**.
-
-**Without an NVIDIA GPU, install [Ollama](https://ollama.com/download) first** and open it once.
-
 **Windows:** on GitHub press **Code → Download ZIP**, unzip it, and double-click **`start.bat`**.
 
-**Mac or Linux:**
+**Mac:** download the ZIP the same way, unzip it, and double-click **`start.command`**. The first time, macOS may say it's from an unidentified developer: right-click it and choose **Open**.
+
+**Linux:**
 
 ```bash
 git clone https://github.com/physicstheory/octopus.git
@@ -46,7 +46,7 @@ cd octopus
 ./start.sh
 ```
 
-Octopus opens at **http://localhost:8000**. The first chat downloads the model, about 1 GB for the default.
+The first run takes 5 to 15 minutes and sets up everything by itself: Python 3.12 if you don't have it, Octopus's libraries, [Ollama](https://ollama.com) for chat, and the default chat model (about 1 GB). Octopus then opens at **http://localhost:8000**. After that, starting takes a few seconds. When you download a newer version, `start` installs whatever it needs again.
 
 ### Which chat model fits?
 
@@ -59,12 +59,16 @@ Pick it from the menu at the top of a chat.
 | Octopus Plus 3B | 4 to 8 GB | Noticeably smarter |
 | Octopus Pro 7B | 8 to 16 GB | Best coder here, slow without a strong GPU |
 
-## Using the free cloud notebook
+## Free cloud GPUs
 
-Open [**Octopus Cloud on Google Colab**](https://colab.research.google.com/github/physicstheory/octopus/blob/main/colab/Octopus_Cloud.ipynb) (also linked inside Octopus), sign in with Google, then choose **Runtime → Change runtime type → T4 GPU**.
+**3D models and images** run on free public GPUs at Hugging Face ([Hunyuan3D 2.1](https://huggingface.co/spaces/tencent/Hunyuan3D-2.1), with Hunyuan3D 2.0 as a fallback, and [FLUX.1 schnell](https://huggingface.co/spaces/black-forest-labs/FLUX.1-schnell)). There's nothing to set up. Your prompt and picture are sent to those Hugging Face Spaces to be generated.
+
+Free use comes with a small daily allowance of GPU time. For more, make a free [Hugging Face account](https://huggingface.co/join), create a **Read** [access token](https://huggingface.co/settings/tokens/new?tokenType=read), and paste it into **Settings** in Octopus. It's saved only on your computer. When the allowance runs out, it refills the next day, or you can use the notebook below.
+
+**Training** uses the free Google Colab notebook. Open [**Octopus Cloud on Google Colab**](https://colab.research.google.com/github/physicstheory/octopus/blob/main/colab/Octopus_Cloud.ipynb) (also linked inside Octopus), sign in with Google, then choose **Runtime → Change runtime type → T4 GPU**.
 
 - **Train a brain:** in Octopus open **Train Octopus**, tick your datasets and press **Download my data**. In the notebook, run cells 1 to 4 and upload that file when asked. Cell 4 downloads a `.gguf` brain. Back in Octopus press **Import brain**, and it appears in the model menu.
-- **3D model:** run cells 1, 5 and 6. Type a description or upload a picture. It shows the model and downloads a `.zip`. In Octopus open **Modelling** and press **Import a 3D model**.
+- **3D models without a daily limit:** run cells 1, 5 and 6. It downloads a finished game pack `.zip`. In Octopus open **Modelling** and press **Import a 3D model**.
 - **Images:** run cells 1 and 7.
 
 Free Colab sessions end after a few hours or when idle, so download results when they finish. The notebook doesn't host a website, so it stays within Colab's free-tier rules.
@@ -95,15 +99,28 @@ Assistant: Eight arms in the deep…
 
 ## 3D modelling details
 
-- **Fast** uses Hunyuan3D-2 mini turbo, the quickest option at about 6 GB of VRAM. **Quality** uses Hunyuan3D-2, about 10 GB, or 16 GB with textures.
-- **Game-ready** reduces the mesh to about 20,000 triangles. **Textures** paints colours and materials onto it.
-- Text prompts first draw a reference picture (SDXL), then turn it into 3D. For the best results, describe one object on its own.
+Every model goes through the same steps a game artist would take:
+
+1. **Generate.** Hunyuan3D sculpts a detailed shape (hundreds of thousands of triangles) and paints its texture. Text prompts first get a reference picture from FLUX or SDXL. For the best results, describe one object on its own, or attach a clean picture of it.
+2. **Clean.** Floating bits, broken triangles and small holes are removed, and the model is scaled to a real height in metres with its pivot at the bottom centre (Y up).
+3. **Reduce to a budget.** Quadric decimation down to your budget: **Mobile** 5k, **Game** 20k, **Hero** 60k or **Cinematic** 150k triangles.
+4. **Unwrap UVs** with xatlas, with padding so mipmaps don't bleed.
+5. **Bake PBR textures** from the detailed sculpt onto the game mesh: Base Colour, ORM (occlusion, roughness, metallic) and a tangent-space Normal map (OpenGL/glTF style), at 1K, 2K or 4K. The fine detail from the sculpt survives on the lighter mesh.
+6. **LODs.** LOD1 (40%) and LOD2 (15%) with smaller textures, named `_LOD0`, `_LOD1`, `_LOD2` for Unity, Unreal and Godot.
+7. **Export.** GLB with PBR materials, OBJ + MTL + textures, STL for 3D printing, and a **Game pack** zip with all of it and a short how-to for each engine.
+
+**Rebuild** on a model card re-runs steps 2 to 7 with the options currently picked, without generating again, so you can make a Mobile and a Hero version of the same model. Imported models (GLB, OBJ, STL or zip) are finished the same way.
+
+**Quality** uses Hunyuan3D at full detail (30 steps, high octree resolution); **Fast** is quicker and rougher.
+
+These are AI-generated models. They come out clean, light and well textured, ready to drop into a game. They aren't hand-retopologized: the mesh is triangles rather than tidy quad loops, and characters aren't rigged for animation. For a hero character you'll animate, use the model as a starting point in Blender (Quad Remesher or Instant Meshes, then Mixamo for rigging).
+
 - Local 3D on an NVIDIA GPU: run `install_studio.bat` or `./install_studio.sh` once. Textures also need the CUDA Toolkit, plus Visual Studio Build Tools on Windows.
-- **Licence:** Hunyuan3D-2 uses the Tencent Hunyuan 3D 2.0 Community License. It's free to use, including commercially, except in the EU, UK and South Korea, and products with over 1 million monthly users need a licence from Tencent. SDXL is CreativeML Open RAIL++-M and FLUX.1 schnell is Apache 2.0.
+- **Licence:** Hunyuan3D uses the Tencent Hunyuan 3D Community License. It's free to use, including commercially, except in the EU, UK and South Korea, and products with over 1 million monthly users need a licence from Tencent. SDXL is CreativeML Open RAIL++-M and FLUX.1 schnell is Apache 2.0.
 
 ## Settings
 
-Set these as environment variables before starting: `set NAME=value` on Windows, `export NAME=value` on Mac or Linux.
+Most people never need these. **Settings** in the sidebar covers where 3D and images run and your Hugging Face token. The rest are environment variables, set before starting: `set NAME=value` on Windows, `export NAME=value` on Mac or Linux.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -115,6 +132,7 @@ Set these as environment variables before starting: `set NAME=value` on Windows,
 | `OCTOPUS_HOST` | `127.0.0.1` | `0.0.0.0` lets you use Octopus from your phone on the same Wi-Fi (requires `OCTOPUS_PASSWORD`) |
 | `OCTOPUS_PASSWORD` | none | Password for the sign-in screen. Without one, only this computer can use Octopus |
 | `OCTOPUS_HOME` | `./workspace` | Where datasets, brains, images and 3D models are stored |
+| `HF_TOKEN` | none | A Hugging Face token for more free cloud generations (you can also paste it in **Settings**) |
 
 ## How it works
 
@@ -125,7 +143,10 @@ octopus/
   ollama_engine.py   Chat through Ollama (any GPU or CPU), GGUF brain import
   engine.py          Chat through transformers on NVIDIA, with LoRA brains
   trainer.py         LoRA fine-tuning with live progress
-  studio.py          Images (diffusers) and image/text to 3D (Hunyuan3D-2)
+  studio.py          Images and image/text to 3D, on your GPU or the free cloud
+  cloud.py           Free Hugging Face GPUs (Hunyuan3D 2.1, FLUX.1 schnell)
+  meshkit.py         Game-ready finishing: clean, decimate, UVs, PBR bake, LODs
+  prefs.py           Settings saved on this computer
   data.py            Reads JSONL/JSON/CSV/TXT and the open datasets
   runner.py          Runs code snippets for Code chats (opt-in)
 colab/               The free cloud notebook

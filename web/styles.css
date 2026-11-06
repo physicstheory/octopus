@@ -498,3 +498,21 @@ a.btn-primary, a.btn-ghost { text-decoration: none; }
 .chat-item .mode-dot.m-model { background: #ff9bd2; }
 .chat-item .mode-dot.m-image { background: #ffd27a; }
 .img-grid.one { grid-template-columns: minmax(0, 560px); }
+
+/* Studio panel, settings and model options */
+.studio-panel { gap: 10px; padding: 14px 16px; }
+.studio-panel > p { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; }
+.studio-panel > p svg { width: 18px; height: 18px; flex: none; margin-top: 1px; color: var(--accent); }
+.linkish { color: var(--accent); font: inherit; padding: 0; text-decoration: underline; text-underline-offset: 2px; }
+.opt-num { display: inline-flex; align-items: center; gap: 2px; padding-right: 10px; }
+.opt-num input { width: 34px; height: 24px; padding: 0 2px; border: 0; background: transparent; box-shadow: none; font-size: 12.5px; color: var(--text); text-align: right; }
+.opt-num input:focus { box-shadow: none; }
+.settings-card { height: auto; width: min(520px, 100%); }
+.settings-body { padding: 18px; display: grid; gap: 18px; }
+.settings-body .muted { margin: 0; font-size: 12.5px; color: var(--text-3); line-height: 1.5; }
+.settings-body .error { margin: 0; color: #ff6b81; font-size: 13px; }
+.settings-body .error:empty { display: none; }
+.asset-bar .btn-primary svg { width: 15px; height: 15px; }
+.opt-num input::-webkit-outer-spin-button, .opt-num input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.opt-num input { -moz-appearance: textfield; appearance: textfield; }
+.settings-body a { color: var(--accent); }

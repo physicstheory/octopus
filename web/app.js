@@ -137,6 +137,7 @@ function showApp() {
   renderModelButton();
   ollamaBanner();
   setMode(S.mode, false);
+  loadSettings().then(() => { if (S.mode === "model" || S.mode === "image") setMode(S.mode, false); });
   renderHistory();
   newChat();
   if (S.cfg.training) { $("#train-badge").hidden = false; }
@@ -294,12 +295,12 @@ function renderEmpty() {
   }[S.mode] || "How can I help you today?";
   const box = $("#suggestions"); box.replaceChildren();
   const studioMode = S.mode === "model" || S.mode === "image";
-  const local = studioMode ? studioLocal() : true;
+  const local = studioMode ? studioReady(S.mode) : true;
   for (const [t, p] of SUGGEST[S.mode]) box.append(h("button", { class: "suggestion glass-btn",
     onclick: () => { $("#input").value = p; autosize(); send(); } }, h("b", {}, t), h("span", {}, p)));
   box.hidden = !local;
   $("#empty").querySelector(".cloud")?.remove(); $("#empty").querySelector(".gallery")?.remove();
-  if (studioMode && !local) $("#empty").append(cloudPanel(S.mode));
+  if (studioMode) $("#empty").append(studioPanel(S.mode));
   if (studioMode) renderGallery(S.mode);
   updateSend();
 }
@@ -402,7 +403,7 @@ async function runBlock(block, code, btn) {
 const input = $("#input"), sendBtn = $("#send");
 function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, innerHeight * 0.4) + "px"; updateSend(); }
 function updateSend() {
-  const blocked = (S.mode === "model" || S.mode === "image") && S.cfg && !studioLocal();
+  const blocked = (S.mode === "model" || S.mode === "image") && S.cfg && !studioReady(S.mode);
   input.disabled = !!blocked;
   sendBtn.disabled = !S.streaming && (blocked || (!input.value.trim() && !S.attachments.length)); sendBtn.classList.toggle("stop", !!S.streaming); }
 input.addEventListener("input", autosize);
@@ -828,8 +829,15 @@ ICON.code = '<path d="m8.5 7.5-5 4.5 5 4.5M15.5 7.5l5 4.5-5 4.5"/>';
 ICON.image = '<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5"/>';
 ICON_HTML.cube = `<svg viewBox="0 0 24 24">${ICON.cube}</svg>`;
 
-const studioLocal = () => !!S.cfg?.localGpu;
-const GEN = Object.assign({ preset: "fast", texture: true, gameReady: true, imageModel: "sdxl", aspect: "1:1", count: 1 }, store.get("octopus.gen", {}));
+const studioReady = (mode) => !!(mode === "model" ? S.cfg?.studio?.model3d : S.cfg?.studio?.image);
+const runsLocally = (mode) => {
+  const st = S.cfg?.studio; if (!st) return false;
+  const where = S.settings?.studioWhere || "auto"; const local = st.local?.[mode === "model" ? "model3d" : "image"];
+  return S.cfg.mock || (local && where !== "cloud") || (!st.cloud && local);
+};
+const GEN = Object.assign({ preset: "quality", texture: true, budget: "game", texSize: 2048, height: 1.0, lods: true, imageModel: "sdxl", aspect: "1:1", count: 1 },
+  store.get("octopus.gen", {}));
+if (GEN.v !== 2) Object.assign(GEN, { v: 2, preset: "quality", budget: "game", texSize: 2048, height: 1.0, lods: true });
 const saveGen = () => store.set("octopus.gen", GEN);
 
 function renderGenOpts() {
@@ -837,16 +845,25 @@ function renderGenOpts() {
   box.replaceChildren();
   const studio = S.cfg?.studio;
   if (S.mode === "model") {
-    const sel = h("select", { class: "opt", title: "Quality", onchange: (e) => { GEN.preset = e.target.value; saveGen(); } },
-      (studio?.modelPresets || []).map((p) => h("option", { value: p.id, selected: p.id === GEN.preset }, p.label.split(" · ")[0])));
-    const toggle = (key, label, title) => h("button", { type: "button", class: "opt", title, "aria-pressed": String(GEN[key]),
+    const pick = (key, title, options, cls = "opt", num = false) => h("select", { class: cls, title,
+      onchange: (e) => { GEN[key] = num ? +e.target.value : e.target.value; saveGen(); } },
+      options.map(([v, label]) => h("option", { value: v, selected: String(v) === String(GEN[key]) }, label)));
+    const toggle = (key, label, title, cls = "opt") => h("button", { type: "button", class: cls, title, "aria-pressed": String(GEN[key]),
       onclick: (e) => { GEN[key] = !GEN[key]; saveGen(); e.currentTarget.setAttribute("aria-pressed", String(GEN[key])); } }, label);
-    box.append(sel, toggle("texture", "Textures", "Paint colours and materials onto the model"),
-      toggle("gameReady", "Game-ready", "Reduce to about 20k triangles so it runs well in games"));
+    const height = h("label", { class: "opt opt-num opt-hide-m", title: "Real-world height in metres. The model is scaled to this, pivot at the bottom centre." },
+      h("input", { type: "number", min: "0.05", max: "500", step: "any", value: GEN.height, "aria-label": "Height in metres",
+        onchange: (e) => { GEN.height = Math.max(0.05, +e.target.value || 1); e.target.value = GEN.height; saveGen(); } }), "m");
+    box.append(
+      pick("preset", "Detail: Quality takes longer and gives sharper shapes", [["quality", "Quality"], ["fast", "Fast"]]),
+      pick("budget", "Triangle budget for the game mesh (LOD0)", (studio?.budgets || []).map((b) => [b.id, b.label.split(" · ")[0] + " " + (b.tris / 1000) + "k"])),
+      pick("texSize", "PBR texture resolution", (studio?.textureSizes || [1024, 2048, 4096]).map((n) => [n, n / 1024 + "K"]), "opt opt-hide-m", true),
+      height,
+      toggle("texture", "Textures", "Paint colours and materials onto the model"),
+      toggle("lods", "LODs", "Also make LOD1 and LOD2, lighter versions for when the model is far away", "opt opt-hide-m"));
   } else if (S.mode === "image") {
     box.append(
-      h("select", { class: "opt", title: "Image model", onchange: (e) => { GEN.imageModel = e.target.value; saveGen(); } },
-        (studio?.imageModels || []).map((m) => h("option", { value: m.id, selected: m.id === GEN.imageModel }, m.label.split(" · ")[0]))),
+      runsLocally("image") ? h("select", { class: "opt", title: "Image model", onchange: (e) => { GEN.imageModel = e.target.value; saveGen(); } },
+        (studio?.imageModels || []).map((m) => h("option", { value: m.id, selected: m.id === GEN.imageModel }, m.label.split(" · ")[0]))) : null,
       h("select", { class: "opt", title: "Shape", onchange: (e) => { GEN.aspect = e.target.value; saveGen(); } },
         ["1:1", "16:9", "9:16", "4:3"].map((a) => h("option", { value: a, selected: a === GEN.aspect }, a))),
       h("select", { class: "opt opt-hide-m", title: "How many", onchange: (e) => { GEN.count = +e.target.value; saveGen(); } },
@@ -888,7 +905,7 @@ async function generateAsset(c, kind, prompt, imageId, imageName) {
   let asset = null, error = null; const started = Date.now();
   const url = kind === "model" ? "/api/generate/model" : "/api/generate/image";
   const body = kind === "model"
-    ? { prompt, image_id: imageId, image_name: imageName, preset: GEN.preset, texture: GEN.texture, game_ready: GEN.gameReady }
+    ? { prompt, image_id: imageId, image_name: imageName, preset: GEN.preset, texture: GEN.texture, ...finishOpts() }
     : { prompt, model: GEN.imageModel, aspect: GEN.aspect, count: GEN.count };
   try {
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: controller.signal, credentials: "same-origin" });
@@ -906,7 +923,8 @@ async function generateAsset(c, kind, prompt, imageId, imageName) {
   el.replaceWith(assetMsg(msg, c.messages.length - 1)); scrollDown();
 }
 
-const fileUrl = (a, name) => `/files/${a.id}/${name}`;
+const finishOpts = () => ({ budget: GEN.budget, texture_size: GEN.texSize, height: GEN.height, lods: GEN.lods });
+const fileUrl = (a, name) => `/files/${a.id}/${name}` + (a.updated && /\.(glb|png)$/.test(name) && name !== a.reference ? `?v=${a.updated}` : "");
 const dl = (href, label) => h("a", { class: "btn-ghost glass-btn", href, download: "" }, svg(ICON.download), label);
 
 function assetMsg(m, index) {
@@ -918,12 +936,21 @@ function assetMsg(m, index) {
     const viewer = document.createElement("model-viewer");
     Object.entries({ src: glb, alt: a.prompt || "3D model", "camera-controls": "", "auto-rotate": "", "shadow-intensity": "1",
       exposure: "1.05", "environment-image": "neutral", "touch-action": "pan-y", "interaction-prompt": "none" }).forEach(([k, v]) => viewer.setAttribute(k, v));
-    const stats = a.stats ? `${a.stats.faces.toLocaleString()} triangles` : "";
-    body.append(h("div", { class: "asset" }, viewer, h("div", { class: "asset-bar" },
+    const st = a.stats || {};
+    const size = st.size_m ? `${st.size_m[1].toFixed(2)} m tall` : "";
+    const facts = [st.faces ? `${st.faces.toLocaleString()} triangles` : "", st.pbr ? `${st.texture / 1024}K PBR` : (a.textured ? "Textured" : "Untextured"),
+      st.lods?.length > 1 ? `${st.lods.length} LODs` : "", size].filter(Boolean);
+    const card = h("div", { class: "asset" }, viewer, h("div", { class: "asset-bar" },
       a.reference ? h("img", { class: "ref-thumb", src: fileUrl(a, a.reference), alt: "Reference" }) : null,
-      h("span", { class: "meta" }, [a.textured ? "Textured" : "Untextured", stats, m.meta].filter(Boolean).join(" · ")),
+      h("span", { class: "meta", title: [a.engine, st.source_faces ? `made from a ${st.source_faces.toLocaleString()} triangle sculpt` : ""].filter(Boolean).join(", ") },
+        [...facts, m.meta].filter(Boolean).join(" · ")),
+      a.files.pack ? h("a", { class: "btn-primary", style: "height:32px;font-size:13px;padding:0 12px", href: fileUrl(a, a.files.pack), download: "",
+        title: "GLB, OBJ and STL for every LOD, PBR textures and a how-to for Unity, Unreal, Godot and Blender" }, svg(ICON.download), "Game pack") : null,
       dl(glb, "GLB"), a.files.obj ? dl(fileUrl(a, a.files.obj), "OBJ") : null, a.files.stl ? dl(fileUrl(a, a.files.stl), "STL") : null,
-      h("button", { class: "btn-primary", style: "height:32px;font-size:13px;padding:0 12px", onclick: () => useInCode(a) }, svg(ICON.code), "Use in Code"))));
+      a.sources ? h("button", { class: "btn-ghost glass-btn", title: "Rebuild the game files with the triangle budget, texture size and height chosen below (no new generation)",
+        onclick: (e) => rebuildAsset(m, index, e.currentTarget) }, svg(ICON.retry), "Rebuild") : null,
+      h("button", { class: "btn-ghost glass-btn", onclick: () => useInCode(a) }, svg(ICON.code), "Use in Code")));
+    body.append(card);
   } else if (a && m.kind === "image") {
     const imgs = a.images || [a.files.png];
     body.append(h("div", { class: "asset" }, h("div", { class: "img-grid" + (imgs.length === 1 ? " one" : "") }, imgs.map((name) => h("div", { class: "img-cell" },
@@ -938,6 +965,17 @@ function assetMsg(m, index) {
 }
 const IMAGE_LABEL = (id) => S.cfg?.studio?.imageModels?.find((m) => m.id === id)?.label.split(" · ")[1];
 
+async function rebuildAsset(m, index, btn) {
+  const c = current(); if (S.streaming) return;
+  btn.disabled = true; btn.lastChild.textContent = "Rebuilding…";
+  try {
+    const a = await api(`/api/assets/${m.asset.id}/refinish`, { body: finishOpts() });
+    m.asset = a; saveChats();
+    const el = btn.closest(".msg"); el.replaceWith(assetMsg(m, index));
+    toast(`Rebuilt: ${a.stats.faces.toLocaleString()} triangles, ${a.stats.texture / 1024}K textures`);
+  } catch (err) { toast(err.message); btn.disabled = false; btn.lastChild.textContent = "Rebuild"; }
+}
+
 async function regenerateAsset(index) {
   const c = current(); if (S.streaming) return;
   const user = c.messages[index - 1]; c.messages = c.messages.slice(0, index); saveChats(); renderThread();
@@ -945,7 +983,7 @@ async function regenerateAsset(index) {
 }
 
 function modelFromImage(a, name) {
-  if (!studioLocal()) return toast("Making 3D models needs the cloud notebook on this computer");
+  if (!studioReady("model")) return toast("3D modelling isn't set up. Run start again to finish installing.");
   setMode("model"); newChat();
   S.attachments = [{ kind: "image", name: a.prompt?.slice(0, 30) || "image", id: a.id, url: fileUrl(a, name), imageName: name }];
   renderAttachments(); $("#input").value = a.prompt || ""; autosize();
@@ -997,19 +1035,64 @@ function openAssetChat(a, mode) {
   saveChats(); renderThread(); renderHistory();
 }
 
-function cloudPanel(mode) {
+function studioPanel(mode) {
   const fileIn = h("input", { type: "file", accept: ".glb,.obj,.stl,.zip", hidden: true, onchange: (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) importModel(f); } });
-  return h("div", { class: "cloud glass" },
-    h("h3", {}, svg(ICON.cloud), mode === "model" ? "Make 3D models free in the cloud" : "Make images free in the cloud"),
-    h("p", {}, `This computer doesn't have an NVIDIA GPU, so ${mode === "model" ? "3D modelling" : "image generation"} runs in Octopus's free Google Colab notebook instead.`),
-    h("ol", {},
-      h("li", {}, "Open the notebook and press Runtime, then Run all (sign in with Google)."),
-      h("li", {}, `Type your ${mode === "model" ? "model description or upload a picture" : "prompt"} in the Studio cell and run it.`),
-      h("li", {}, mode === "model" ? "Download the .zip it makes and import it here to view it, download GLB/OBJ/STL and use it in Code." : "Download the images it makes.")),
-    h("div", { class: "row" },
-      h("a", { class: "btn-primary", href: S.cfg.colabUrl, target: "_blank", rel: "noopener" }, svg(ICON.cloud), "Open the cloud notebook"),
-      mode === "model" ? h("label", { class: "btn-ghost glass-btn", style: "cursor:pointer" }, svg(ICON.upload), "Import a 3D model", fileIn) : null));
+  const local = runsLocally(mode);
+  const st = S.cfg.studio || {};
+  const ready = studioReady(mode);
+  const where = S.cfg.mock ? "Preview mode: placeholder results, no models needed."
+    : !ready ? "The cloud helper isn't installed yet. Close Octopus and run start again."
+    : local ? `Runs on your ${S.cfg.device || "GPU"}.`
+    : mode === "model" ? `Runs free on Hugging Face's cloud GPUs with ${st.cloud3d?.[0] || "Hunyuan3D"}, then Octopus finishes the mesh on this computer.`
+    : "Runs free on Hugging Face's cloud GPUs with FLUX.1 schnell.";
+  const quota = !local && !S.cfg.mock && !S.settings?.hasToken
+    ? h("button", { class: "linkish", onclick: openSettings }, "Add a free Hugging Face token for more daily generations") : null;
+  return h("div", { class: "cloud glass studio-panel" },
+    h("p", {}, svg(local ? ICON.cube : ICON.cloud), h("span", {}, where, " ", quota)),
+    mode === "model" ? h("div", { class: "row" },
+      h("span", { class: "muted", style: "font-size:13px;margin-right:auto" }, "Every model comes game-ready: cleaned, UV-unwrapped, PBR-baked with LODs."),
+      h("label", { class: "btn-ghost glass-btn", style: "cursor:pointer;height:32px;font-size:13px" }, svg(ICON.upload), "Import a 3D model", fileIn)) : null);
 }
+
+// ---------- settings ----------
+async function loadSettings() { S.settings = await api("/api/settings").catch(() => ({})); }
+
+function openSettings() {
+  $("#settings-modal")?.remove();
+  const s = S.settings || {};
+  const tok = h("input", { type: "password", placeholder: s.hasToken ? `Saved (${s.tokenHint}). Paste a new one to replace it` : "hf_…", autocomplete: "off", spellcheck: "false" });
+  const whereSel = h("select", {}, [["auto", "Automatic"], ["local", "This computer (NVIDIA GPU)"], ["cloud", "Free cloud (Hugging Face)"]]
+    .map(([v, l]) => h("option", { value: v, selected: v === (s.studioWhere || "auto") }, l)));
+  const err = h("p", { class: "error" });
+  const close = () => modal.remove();
+  const save = async (clear = false) => {
+    err.textContent = "";
+    try {
+      const body = { studio_where: whereSel.value };
+      if (clear) body.hf_token = ""; else if (tok.value.trim()) body.hf_token = tok.value.trim();
+      S.settings = await api("/api/settings", { body });
+      close(); toast(clear ? "Token removed" : "Settings saved"); setMode(S.mode, false);
+    } catch (e) { err.textContent = e.message; }
+  };
+  const modal = h("div", { id: "settings-modal", class: "modal", onclick: (e) => { if (e.target === modal) close(); } },
+    h("div", { class: "modal-card glass settings-card", role: "dialog", "aria-label": "Settings" },
+      h("div", { class: "modal-head" }, h("b", {}, "Settings"), h("span", { class: "muted" }, "Saved on this computer"),
+        h("button", { class: "icon-btn", "aria-label": "Close settings", onclick: close }, svg('<path d="M7 7l10 10M17 7 7 17"/>'))),
+      h("div", { class: "settings-body" },
+        h("div", { class: "field" }, h("label", {}, "Where to make images and 3D models"), whereSel,
+          h("p", { class: "muted" }, S.cfg.studio?.local?.model3d ? "Your NVIDIA GPU is set up for 3D." : "This computer has no NVIDIA GPU set up for 3D, so Automatic uses the free cloud.")),
+        h("div", { class: "field" }, h("label", {}, "Hugging Face token (free, optional)"), tok,
+          h("p", { class: "muted" }, "The free cloud gives everyone a small daily allowance of GPU time. A free Hugging Face account gets more. ",
+            h("a", { href: "https://huggingface.co/join", target: "_blank", rel: "noopener" }, "Create an account"), ", then make a ",
+            h("a", { href: "https://huggingface.co/settings/tokens/new?tokenType=read", target: "_blank", rel: "noopener" }, "Read token"),
+            " and paste it here. It stays on this computer.")),
+        err,
+        h("div", { class: "row", style: "justify-content:flex-end" },
+          s.hasToken && !s.tokenFromEnv ? h("button", { class: "btn-ghost glass-btn", onclick: () => save(true) }, "Remove token") : null,
+          h("button", { class: "btn-primary", onclick: () => save() }, "Save")))));
+  document.body.append(modal); (s.hasToken ? whereSel : tok).focus();
+}
+$("#settings-btn")?.addEventListener("click", () => { openSettings(); });
 
 async function uploadRaw(kind, file, name = "") {
   const res = await fetch(`/api/import?kind=${kind}&filename=${encodeURIComponent(file.name)}&name=${encodeURIComponent(name)}`, {

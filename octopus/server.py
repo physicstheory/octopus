@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import data as datasets
+from . import meshkit, prefs
 from . import studio as studio_mod
 from .config import ADAPTERS_DIR, BASE_MODELS, COLAB_URL, DEFAULT_BASE, INCOMING_DIR, WEB_DIR, settings
 from .engine import StopFlag
@@ -325,8 +326,11 @@ def _studio_stream(gen):
 def _studio_ready():
     if trainer.running:
         raise HTTPException(409, "Octopus is training right now. Try again when it finishes.")
-    if not LOCAL_GPU:
-        raise HTTPException(409, "Making images and 3D models needs an NVIDIA GPU. Use the free cloud notebook instead.")
+
+
+def _where(b: dict) -> str:
+    w = b.get("where") or prefs.load().get("studio_where", "auto")
+    return w if w in ("auto", "local", "cloud") else "auto"
 
 
 @app.post("/api/generate/image")
@@ -334,10 +338,10 @@ async def gen_image(req: Request):
     need_auth(req)
     _studio_ready()
     if not studio_mod.capabilities()["image"]:
-        raise HTTPException(409, "Image generation isn't installed. Run install_studio (see README).")
+        raise HTTPException(409, "Image generation isn't set up. Run start again to finish installing.")
     b = await req.json()
     return _studio_stream(studio.make_image(str(b.get("prompt", ""))[:2000], b.get("model", "sdxl"), b.get("aspect", "1:1"),
-                                            int(b.get("count", 1)), b.get("seed")))
+                                            int(b.get("count", 1)), b.get("seed"), _where(b)))
 
 
 @app.post("/api/generate/model")
@@ -345,11 +349,47 @@ async def gen_model(req: Request):
     need_auth(req)
     _studio_ready()
     if not studio_mod.capabilities()["model3d"]:
-        raise HTTPException(409, "3D modelling isn't installed. Run install_studio (see README).")
+        raise HTTPException(409, "3D modelling isn't set up. Run start again to finish installing.")
     b = await req.json()
-    return _studio_stream(studio.make_model(str(b.get("prompt", ""))[:2000], b.get("image_id"), b.get("preset", "fast"),
-                                            bool(b.get("texture", True)), bool(b.get("game_ready", True)), b.get("seed"),
-                                            b.get("image_name")))
+    finish = meshkit.FinishOptions.from_request(b) if b.get("finish", True) else None
+    return _studio_stream(studio.make_model(str(b.get("prompt", ""))[:2000], b.get("image_id"), b.get("preset", "quality"),
+                                            bool(b.get("texture", True)), finish, b.get("seed"), b.get("image_name"),
+                                            _where(b)))
+
+
+@app.post("/api/assets/{aid}/refinish")
+async def refinish_asset(aid: str, req: Request):
+    """Rebuild a model's game files (budget, texture size, height, LODs) without generating it again."""
+    need_auth(req)
+    if studio.busy:
+        raise HTTPException(409, "Octopus is making something. Try again when it finishes.")
+    b = await req.json()
+    try:
+        return await _in_thread(studio_mod.refinish, aid, meshkit.FinishOptions.from_request(b))
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+
+
+@app.get("/api/settings")
+def get_settings(req: Request):
+    need_auth(req)
+    return prefs.public()
+
+
+@app.post("/api/settings")
+async def set_settings(req: Request):
+    need_auth(req)
+    b = await req.json()
+    changes = {}
+    if "hf_token" in b:
+        tok = str(b.get("hf_token") or "").strip()
+        if tok and not prefs.TOKEN_RE.fullmatch(tok):
+            raise HTTPException(400, "That doesn't look like a Hugging Face token. It starts with hf_.")
+        changes["hf_token"] = tok
+    if b.get("studio_where") in ("auto", "local", "cloud"):
+        changes["studio_where"] = b["studio_where"]
+    prefs.save(**changes)
+    return prefs.public()
 
 
 @app.post("/api/upload-image")
@@ -387,7 +427,8 @@ def asset_file(aid: str, name: str, req: Request):
     path = folder / name
     if not path.is_file():
         raise HTTPException(404, "Not found")
-    media = {".glb": "model/gltf-binary", ".obj": "text/plain", ".stl": "model/stl", ".png": "image/png"}.get(path.suffix)
+    media = {".glb": "model/gltf-binary", ".obj": "text/plain", ".mtl": "text/plain", ".stl": "model/stl",
+             ".png": "image/png", ".zip": "application/zip", ".txt": "text/plain"}.get(path.suffix)
     resp = FileResponse(path, media_type=media)
     # Lets the sandboxed HTML preview in Coding mode load your models.
     resp.headers["Access-Control-Allow-Origin"] = "*"
@@ -457,42 +498,55 @@ def _import_brain(tmp, ext: str, brain: str) -> dict:
 
 
 def _import_model(tmp, ext: str, label: str) -> dict:
-    aid, folder = studio_mod.new_asset("model", prompt=label[:80], preset="imported", source="import")
-    files = {}
-    if ext == "zip":
-        with zipfile.ZipFile(tmp) as z:
-            for m in z.namelist():
-                base = m.split("/")[-1]
-                e = base.lower().rsplit(".", 1)[-1]
-                if e in ("glb", "obj", "stl", "png") and re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", base):
-                    (folder / base).write_bytes(z.read(m))
-                    if e != "png":
-                        files.setdefault(e, base)
-                    elif "reference" in base:
-                        files.setdefault("reference", base)
-    else:
-        target = folder / f"model.{ext}"
-        shutil.copy(tmp, target)
-        files[ext] = target.name
-    if not any(k in files for k in ("glb", "obj", "stl")):
+    """Import a model made elsewhere (cloud notebook, Blender, another tool) and finish it for games."""
+    aid, folder = studio_mod.new_asset("model", prompt=label[:80], preset="imported", source="import", where="import")
+    ok_name = re.compile(r"[A-Za-z0-9_.-]{1,80}")
+    try:
+        if ext == "zip":
+            with zipfile.ZipFile(tmp) as z:
+                names = {m.split("/")[-1]: m for m in z.namelist() if not m.endswith("/")}
+                packed = None
+                if "meta.json" in names:
+                    try:
+                        packed = json.loads(z.read(names["meta.json"]))
+                    except Exception:
+                        packed = None
+                if packed and packed.get("kind") == "model" and packed.get("files"):
+                    # Already finished by Octopus (for example in the cloud notebook): copy it as is.
+                    for base, m in names.items():
+                        if ok_name.fullmatch(base) and base != "meta.json" and \
+                                base.lower().rsplit(".", 1)[-1] in ("glb", "obj", "mtl", "stl", "png", "zip", "txt"):
+                            (folder / base).write_bytes(z.read(m))
+                    keep = {k: packed.get(k) for k in ("files", "stats", "finish", "reference", "sources", "engine", "textured")}
+                    meta = {**studio_mod.read_meta(aid), **keep}
+                    studio_mod.write_meta(folder, meta)
+                    return meta
+                models = [b for b in names if b.lower().rsplit(".", 1)[-1] in ("glb", "obj", "stl")]
+                if not models:
+                    raise HTTPException(400, "No 3D model found in that zip.")
+                textured = [b for b in models if "textured" in b.lower()]
+                pick = (textured or sorted(models, key=lambda b: (not b.lower().endswith(".glb"), b)))[0]
+                # OBJ files need their .mtl and textures next to them.
+                for base, m in names.items():
+                    if ok_name.fullmatch(base) and base.lower().rsplit(".", 1)[-1] in ("glb", "obj", "mtl", "stl", "png", "jpg", "jpeg"):
+                        (folder / f"in-{base}").write_bytes(z.read(m))
+                src = folder / f"in-{pick}"
+        else:
+            src = folder / f"source-shape.{ext}"
+            shutil.copy(tmp, src)
+        shape = folder / f"source-shape{src.suffix}"
+        if src != shape:
+            src.rename(shape)
+        meta = {**studio_mod.read_meta(aid), "sources": {"shape": shape.name, "textured": None}, "engine": "Imported"}
+        meta.update(studio_mod.finish_asset(folder, shape, None, meshkit.FinishOptions(), lambda *a, **k: None))
+        studio_mod.write_meta(folder, meta)
+        return meta
+    except HTTPException:
         studio_mod.delete_asset(aid)
-        raise HTTPException(400, "No 3D model found in that file.")
-    try:  # fill in the missing formats so every model has GLB, OBJ and STL
-        import trimesh
-
-        src = folder / (files.get("glb") or files.get("obj") or files.get("stl"))
-        mesh = trimesh.load(src, force="mesh")
-        for e in ("glb", "obj", "stl"):
-            if e not in files:
-                mesh.export(folder / f"model.{e}")
-                files[e] = f"model.{e}"
-        stats = {"faces": int(len(mesh.faces)), "vertices": int(len(mesh.vertices))}
-    except Exception:
-        stats = None
-    meta = {**studio_mod.read_meta(aid), "files": {k: v for k, v in files.items() if k != "reference"},
-            "reference": files.get("reference"), "stats": stats}
-    studio_mod.write_meta(folder, meta)
-    return meta
+        raise
+    except Exception as exc:
+        studio_mod.delete_asset(aid)
+        raise HTTPException(400, f"Couldn't read that 3D model: {exc}")
 
 
 # ---------- datasets ----------
@@ -617,6 +671,32 @@ def health():
 app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
 
 
+def _warm_up_ollama() -> None:
+    """Download the default chat model in the background so the first chat starts quickly."""
+    import threading
+
+    def run():
+        try:
+            from .ollama_engine import OLLAMA_TAGS, available, installed_models
+
+            for _ in range(30):  # Ollama may still be starting up
+                if available():
+                    break
+                time.sleep(2)
+            else:
+                return
+            tag = OLLAMA_TAGS.get(settings.base_model or DEFAULT_BASE)
+            if tag and not any(m.get("name", "").split(":latest")[0] == tag for m in installed_models()):
+                print(f"     Downloading the chat model ({tag}) in the background…")
+                for _ in engine.prepare(settings.base_model or DEFAULT_BASE, None):
+                    pass
+                print("     Chat model ready.")
+        except Exception as exc:
+            print(f"     Couldn't pre-download the chat model: {exc}")
+
+    threading.Thread(target=run, daemon=True).start()
+
+
 def main() -> None:
     import uvicorn
 
@@ -625,7 +705,9 @@ def main() -> None:
         raise SystemExit("Set OCTOPUS_PASSWORD before sharing Octopus on your network (see README), "
                          "or keep OCTOPUS_HOST=127.0.0.1.")
     print(f"\n  🐙 Octopus is running at http://{'localhost' if local else settings.host}:{settings.port}")
-    print(f"     Chat engine: {BACKEND}{'' if LOCAL_GPU else ' · training and 3D use the free cloud notebook'}\n")
+    print(f"     Chat engine: {BACKEND}{'' if LOCAL_GPU else ' · 3D and images use free cloud GPUs, training uses the cloud notebook'}\n")
+    if BACKEND == "ollama":
+        _warm_up_ollama()
     uvicorn.run(app, host=settings.host, port=settings.port, log_level="warning")
 
 
