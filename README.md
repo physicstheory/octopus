@@ -1,6 +1,6 @@
 # 🐙 Octopus
 
-Your own AI assistant: chat, coding, game-ready 3D modelling and images, with a clean, simple interface. Chat runs on **your** computer with no API and no subscription. 3D and images run on your NVIDIA GPU if you have one, or on **free cloud GPUs** automatically if you don't. One double-click installs everything, or [run it in the cloud](#run-it-in-the-cloud-nothing-to-install) with nothing to install.
+Your own AI assistant: chat, coding, game-ready 3D modelling and images, with a clean, simple interface. Chat runs on **your** computer with no API and no subscription. 3D and images run on your NVIDIA GPU if you have one, or on **free cloud GPUs** automatically if you don't. One double-click installs everything, or [run it on a free cloud server](#run-it-in-the-cloud-nothing-to-install) with nothing to install.
 
 Octopus starts from free open-source models (Qwen, Llama, Gemma, Phi and DeepSeek for chat, Hunyuan3D-2 for 3D, SDXL or FLUX for images), and you make it yours by training it on your own examples.
 
@@ -38,11 +38,27 @@ Mesh finishing (clean-up, decimation, UVs, texture baking, LODs) always runs on 
 
 ## Run it in the cloud (nothing to install)
 
-Octopus can live on a free [Hugging Face Space](https://huggingface.co/spaces), so it's always online at your own web address and opens on any device, with no install and no waiting.
+Octopus can run on a free server in the cloud, so it's always online at your own web address and opens on any device, with no install on your computer and no waiting.
 
-**Easy way (2 minutes):** open [**Put Octopus online**](https://colab.research.google.com/github/physicstheory/octopus/blob/main/colab/Put_Octopus_Online.ipynb), make a free Hugging Face token with the link it gives you, type an invite code, and press ▶. It creates the Space, its settings and its data store for you, then tells you your Octopus's web address. Hugging Face builds it for about 10 minutes, once.
+### Oracle Cloud (free forever, recommended)
 
-<details><summary>Doing it by hand instead</summary>
+Oracle's Always Free tier includes a server with 4 cores and 24 GB of memory, which runs Octopus comfortably: Reef and Nautilus answer quickly, and the 7B and 8B models are usable. One paste sets it all up:
+
+1. Sign up at [signup.cloud.oracle.com](https://signup.cloud.oracle.com). Pick the region closest to you (it can't be changed later). Oracle asks for a card to check you're a real person; the Always Free server doesn't charge it.
+2. Once you're in the Oracle Cloud console, click the **Cloud Shell** button (the `>_` icon at the top right) and wait for the black terminal to open at the bottom.
+3. Paste this, press Enter, and type an invite code when it asks:
+   ```
+   bash <(curl -fsSL https://raw.githubusercontent.com/physicstheory/octopus/main/cloud/oracle-launch.sh)
+   ```
+4. It creates the network and the server, installs Octopus, and prints your address, like `https://152-67-1-2.sslip.io`. Open it, create your owner account with the invite code, and bookmark it.
+
+If Oracle says its free servers are full in your region, the script keeps trying every minute for up to 3 hours. You can leave the tab open. Your chats, models and images are saved on the server's own disk. To update Octopus later, open Cloud Shell and run `ssh ubuntu@YOUR-SERVER-IP octopus-update`.
+
+### Hugging Face Space
+
+New Hugging Face accounts can't run free Spaces any more (the build works but the Space shows "paused" with a quota of 0), so this needs [Hugging Face PRO](https://huggingface.co/subscribe/pro). With PRO, open [**Put Octopus online**](https://colab.research.google.com/github/physicstheory/octopus/blob/main/colab/Put_Octopus_Online.ipynb), make a Write token with the link it gives you, type an invite code, and press ▶. It creates the Space and its settings for you.
+
+<details><summary>Doing the Space by hand instead</summary>
 
 1. Sign in at [huggingface.co](https://huggingface.co/join) (free).
 2. Make a **Write** token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens/new?tokenType=write) and copy it.
@@ -53,7 +69,7 @@ Octopus can live on a free [Hugging Face Space](https://huggingface.co/spaces), 
 
 </details>
 
-What to expect:
+What to expect on a Space:
 
 - **Starting:** there's no install. A free Space goes to sleep after 48 hours without visits; opening it again wakes it in a minute or two.
 - **Saving:** accounts, chats, datasets, 3D models, images and imported brains are saved to a private dataset called `octopus-data` on your Hugging Face account every minute, and come back after a restart.
