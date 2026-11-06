@@ -1,8 +1,8 @@
 # 🐙 Octopus
 
-Your own AI assistant: chat, coding, game-ready 3D modelling and images, with a clean, simple interface. Chat runs on **your** computer with no API and no subscription. 3D and images run on your NVIDIA GPU if you have one, or on **free cloud GPUs** automatically if you don't. One double-click installs everything.
+Your own AI assistant: chat, coding, game-ready 3D modelling and images, with a clean, simple interface. Chat runs on **your** computer with no API and no subscription. 3D and images run on your NVIDIA GPU if you have one, or on **free cloud GPUs** automatically if you don't. One double-click installs everything, or [run it in the cloud](#run-it-in-the-cloud-nothing-to-install) with nothing to install.
 
-Octopus starts from free open-source models (Qwen 2.5 Coder for chat, Hunyuan3D-2 for 3D, SDXL or FLUX for images), and you make it yours by training it on your own examples.
+Octopus starts from free open-source models (Qwen, Llama, Gemma, Phi and DeepSeek for chat, Hunyuan3D-2 for 3D, SDXL or FLUX for images), and you make it yours by training it on your own examples.
 
 ![Octopus home](docs/home.png)
 
@@ -35,6 +35,29 @@ Plus **Train Octopus**: teach it with your own prompts and answers so it becomes
 Mesh finishing (clean-up, decimation, UVs, texture baking, LODs) always runs on your own computer's CPU.
 
 ![Cloud notebook panel](docs/cloud.png)
+
+## Run it in the cloud (nothing to install)
+
+Octopus can live on a free [Hugging Face Space](https://huggingface.co/spaces), so it's always online at your own web address and opens on any device, with no install and no waiting. It takes about 5 minutes to set up, once:
+
+1. Sign in at [huggingface.co](https://huggingface.co/join) (free).
+2. Make a **Write** token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens/new?tokenType=write) and copy it.
+3. Create a Space at [huggingface.co/new-space](https://huggingface.co/new-space): name it `octopus`, choose **Docker** → **Blank**, hardware **CPU basic (free)**, and **Public**. (Octopus has its own sign-in, and your data is kept in a separate private dataset.)
+4. In the Space, open **Settings → Variables and secrets** and add two **secrets**:
+   - `OCTOPUS_PASSWORD`: an invite code you make up. People need it to create an account.
+   - `HF_TOKEN`: the token from step 2.
+5. Open the Space's **Files** tab, choose **Add file → Create a new file**, name it `Dockerfile`, paste in everything from [cloud/Dockerfile](cloud/Dockerfile) and press **Commit**.
+6. The first build takes about 10 minutes. Then open **https://YOUR-USERNAME-octopus.hf.space**, create your owner account with the invite code, and bookmark it.
+
+What to expect:
+
+- **Starting:** there's no install. A free Space goes to sleep after 48 hours without visits; opening it again wakes it in a minute or two.
+- **Saving:** accounts, chats, datasets, 3D models, images and imported brains are saved to a private dataset called `octopus-data` on your Hugging Face account every minute, and come back after a restart.
+- **Speed:** the free Space has 2 CPU cores and no GPU. Reef and Nautilus are built in and answer at a comfortable pace; 7B models and bigger are slow there. For faster chat, change the Space's hardware to **CPU upgrade** (paid, by the hour) in its Settings.
+- **3D and images** use the same free cloud GPUs as on a computer, and your token gives them a bigger daily allowance.
+- **Training** still happens in the Colab notebook. Import the brain on the Space's Train page as usual.
+- **Updating:** in the Space's Settings press **Factory rebuild** to get the newest Octopus from GitHub.
+- The **Run** button in Code mode is off in the cloud.
 
 ## Install
 
