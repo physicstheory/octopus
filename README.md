@@ -1,6 +1,6 @@
 # 🐙 Octopus
 
-Your own AI assistant: chat, coding, game-ready 3D modelling and images, with a Liquid Glass interface. Chat runs on **your** computer with no API and no subscription. 3D and images run on your NVIDIA GPU if you have one, or on **free cloud GPUs** automatically if you don't. One double-click installs everything.
+Your own AI assistant: chat, coding, game-ready 3D modelling and images, with a clean, simple interface. Chat runs on **your** computer with no API and no subscription. 3D and images run on your NVIDIA GPU if you have one, or on **free cloud GPUs** automatically if you don't. One double-click installs everything.
 
 Octopus starts from free open-source models (Qwen 2.5 Coder for chat, Hunyuan3D-2 for 3D, SDXL or FLUX for images), and you make it yours by training it on your own examples.
 
@@ -137,7 +137,7 @@ Most people never need these. **Settings** in the sidebar covers where 3D and im
 ## How it works
 
 ```
-web/                 Liquid Glass UI (plain HTML, CSS and JS, no build step)
+web/                 Web UI (plain HTML, CSS and JS, no build step)
 octopus/
   server.py          FastAPI server: chat, studio, training, import and run APIs
   ollama_engine.py   Chat through Ollama (any GPU or CPU), GGUF brain import

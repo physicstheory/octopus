@@ -241,6 +241,7 @@ const seg = $(".segmented"), thumb = $(".seg-thumb");
 $$(".segmented button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
 function setMode(mode, persist = true) {
   S.mode = mode; if (persist) store.set("octopus.mode", mode);
+  document.body.dataset.mode = mode;
   const btn = $(`.segmented button[data-mode="${mode}"]`);
   $$(".segmented button").forEach((b) => b.setAttribute("aria-selected", String(b === btn)));
   requestAnimationFrame(() => { thumb.style.width = btn.offsetWidth + "px"; thumb.style.transform = `translateX(${btn.offsetLeft - 3}px)`; });
@@ -303,24 +304,64 @@ const SUGGEST = {
     ["Solve a puzzle", "Write Python that finds all prime numbers below 1000 and prints how many there are."],
   ],
 };
+// The composer sits in the middle of a new chat's start screen and docks to the bottom once
+// the conversation starts.
+function dockComposer(inEmpty) {
+  const form = $("#composer"); if (!form) return;
+  if (inEmpty) $("#empty .slot")?.append(form);
+  else if (form.parentElement !== $("#composer-wrap")) $("#composer-wrap").prepend(form);
+  app.classList.toggle("is-empty", !!inEmpty);
+}
+function hideEmpty() { $("#empty").hidden = true; dockComposer(false); }
+
+const fillPrompt = (p) => { const i = $("#input"); i.value = p; autosize(); updateSend(); i.focus(); };
+const MODE_HERO = {
+  chat: { eyebrow: null, sub: null },
+  code: { eyebrow: "octopus ~ code", title: "What are we building?", sub: "Write, explain and fix code. HTML gets a live preview, and every block can be copied." },
+  model: { eyebrow: "3D studio", title: "What should we model?", sub: "Describe it or attach a picture. You get a game-ready model: clean mesh, UVs, PBR textures and LODs." },
+  image: { eyebrow: "Image studio", title: "What should we picture?", sub: "Concept art, icons, wallpapers and reference pictures for 3D models." },
+};
+const CODE_LANG = ["Python", "HTML", "Explain", "Python"];
+const MODEL_STEPS = [["Describe or attach", "A sentence, or a picture of the object"], ["Sculpt", "Hunyuan3D makes the shape on a free cloud GPU"], ["Finish", "Octopus cleans, unwraps, bakes and builds LODs here"]];
+
 function renderEmpty() {
+  const empty = $("#empty"); const mode = S.mode;
   const hr = new Date().getHours();
-  $("#greeting").textContent = { code: "What are we building?", model: "What should we model?", image: "What should we picture?" }[S.mode] ||
-    (hr < 5 ? "Up late?" : hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening");
-  $("#empty-sub").textContent = {
-    code: "Octopus writes, explains and fixes code.",
-    model: "Turn a description or a picture into a textured 3D model for your games.",
-    image: "Create pictures, concept art and references for 3D models.",
-  }[S.mode] || "How can I help you today?";
-  const box = $("#suggestions"); box.replaceChildren();
-  const studioMode = S.mode === "model" || S.mode === "image";
-  const local = studioMode ? studioReady(S.mode) : true;
-  for (const [t, p] of SUGGEST[S.mode]) box.append(h("button", { class: "suggestion glass-btn",
-    onclick: () => { $("#input").value = p; autosize(); send(); } }, h("b", {}, t), h("span", {}, p)));
-  box.hidden = !local;
-  $("#empty").querySelector(".cloud")?.remove(); $("#empty").querySelector(".gallery")?.remove();
-  if (studioMode) $("#empty").append(studioPanel(S.mode));
-  if (studioMode) renderGallery(S.mode);
+  const hero = MODE_HERO[mode];
+  const title = hero.title || (hr < 5 ? "Up late?" : hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening");
+  const studioMode = mode === "model" || mode === "image";
+  const ready = studioMode ? studioReady(mode) : true;
+  const below = h("div", { class: "below" });
+
+  if (mode === "chat") {
+    below.append(h("div", { class: "pills" }, SUGGEST.chat.map(([t, p]) =>
+      h("button", { class: "pill", onclick: () => fillPrompt(p) }, t))));
+  } else if (mode === "code") {
+    below.append(h("h6", {}, "Start from"), h("div", { class: "starter-grid" }, SUGGEST.code.map(([t, p], i) =>
+      h("button", { class: "starter", onclick: () => fillPrompt(p) }, h("span", { class: "lang" }, CODE_LANG[i]), h("b", {}, t), h("span", {}, p)))),
+      h("div", { class: "caps" }, [["Copy", ICON.copy], ["Live HTML preview", ICON.play], [S.cfg?.allowRun ? "Run on this computer" : "Run (turn on in Settings)", ICON.wrench]]
+        .map(([t, i]) => h("span", {}, svg(i), t))));
+  } else if (mode === "model") {
+    below.append(h("div", { class: "steps" }, MODEL_STEPS.map(([t, d], i) => h("div", { class: "step-card" }, h("i", {}, String(i + 1)), h("b", {}, t), h("span", {}, d)))));
+    if (ready) below.append(h("h6", {}, "Try one"), h("div", { class: "starter-grid four" }, SUGGEST.model.map(([t, p]) =>
+      h("button", { class: "starter", onclick: () => fillPrompt(p) }, h("b", {}, t), h("span", {}, p)))));
+    below.append(studioPanel(mode));
+  } else {
+    if (ready) below.append(h("div", { class: "pills" }, SUGGEST.image.map(([t, p]) => h("button", { class: "pill", title: p, onclick: () => fillPrompt(p) }, t))));
+    below.append(studioPanel(mode));
+  }
+
+  dockComposer(false); // take the composer out before the start screen is rebuilt
+  empty.replaceChildren(
+    h("div", { class: "hero" },
+      mode === "chat" ? h("div", { class: "logo-xl", "aria-hidden": "true" }) : h("span", { class: "eyebrow" }, hero.eyebrow),
+      h("h1", { id: "greeting" }, title),
+      hero.sub ? h("p", { class: "sub" }, hero.sub) : null),
+    h("div", { class: "slot" }),
+    below);
+  empty.dataset.mode = mode;
+  if (!empty.hidden) dockComposer(true);
+  if (studioMode) renderGallery(mode);
   updateSend();
 }
 
@@ -328,7 +369,8 @@ function renderThread() {
   const c = current(); const thread = $("#thread");
   thread.replaceChildren();
   $("#empty").hidden = !!c?.messages.length;
-  if (!c?.messages.length) { renderEmpty(); return; }
+  if (!c?.messages.length) { renderEmpty(); dockComposer(true); return; }
+  dockComposer(false);
   c.messages.forEach((m, i) => thread.append(m.role === "user" ? userMsg(m) : assistantMsg(m, i)));
   scrollDown(true);
 }
@@ -472,7 +514,7 @@ async function send() {
   c.mode = S.mode; c.updated = Date.now();
   input.value = ""; S.attachments = []; renderAttachments(); autosize();
   saveChats(); renderHistory();
-  $("#empty").hidden = true;
+  hideEmpty();
   thread.append(userMsg(c.messages.at(-1)));
   await generate(c);
 }
@@ -560,7 +602,7 @@ function showChatView() {
 async function openTrain() {
   S.view = "train"; app.classList.add("train-view");
   $$(".type-item").forEach((b) => b.classList.remove("active"));
-  $("#thread").hidden = true; $("#empty").hidden = true; $("#composer-wrap").hidden = true;
+  $("#thread").hidden = true; hideEmpty(); $("#composer-wrap").hidden = true;
   $(".topbar .segmented").hidden = true; $("#nav-train").classList.add("active");
   history.replaceState(null, "", "#train");
   renderHistory();
@@ -890,13 +932,13 @@ function renderGenOpts() {
       toggle("texture", "Textures", "Paint colours and materials onto the model"),
       toggle("lods", "LODs", "Also make LOD1 and LOD2, lighter versions for when the model is far away", "opt opt-hide-m"));
   } else if (S.mode === "image") {
-    box.append(
+    box.append(...[
       runsLocally("image") ? h("select", { class: "opt", title: "Image model", onchange: (e) => { GEN.imageModel = e.target.value; saveGen(); } },
         (studio?.imageModels || []).map((m) => h("option", { value: m.id, selected: m.id === GEN.imageModel }, m.label.split(" · ")[0]))) : null,
       h("select", { class: "opt", title: "Shape", onchange: (e) => { GEN.aspect = e.target.value; saveGen(); } },
         ["1:1", "16:9", "9:16", "4:3"].map((a) => h("option", { value: a, selected: a === GEN.aspect }, a))),
       h("select", { class: "opt opt-hide-m", title: "How many", onchange: (e) => { GEN.count = +e.target.value; saveGen(); } },
-        [1, 2, 4].map((n) => h("option", { value: n, selected: n === GEN.count }, `${n} image${n > 1 ? "s" : ""}`))));
+        [1, 2, 4].map((n) => h("option", { value: n, selected: n === GEN.count }, `${n} image${n > 1 ? "s" : ""}`)))].filter(Boolean));
   }
 }
 
@@ -919,7 +961,7 @@ async function sendStudio(c, text) {
   if (c.title === "New chat") c.title = (text || img?.name || "3D model").replace(/\s+/g, " ").slice(0, 48);
   c.mode = S.mode; c.updated = Date.now();
   input.value = ""; S.attachments = []; renderAttachments(); autosize(); saveChats(); renderHistory();
-  $("#empty").hidden = true; thread.append(userMsg(user));
+  hideEmpty(); thread.append(userMsg(user));
   await generateAsset(c, S.mode, text, img?.id, img?.imageName);
 }
 
@@ -1056,7 +1098,7 @@ async function renderGallery(mode) {
   if (S.mode !== mode || current()?.messages.length) return;
   $("#empty").querySelector(".gallery")?.remove();
   if (!items.length) return;
-  $("#empty").append(h("div", { class: "gallery" }, h("h6", {}, mode === "model" ? "Your 3D models" : "Your images"),
+  ($("#empty .below") || $("#empty")).append(h("div", { class: "gallery" }, h("h6", {}, mode === "model" ? "Your 3D models" : "Your images"),
     h("div", { class: "gallery-grid" }, items.slice(0, 12).map((a) => h("button", { class: "gallery-item", title: a.prompt || "",
       onclick: () => openAssetChat(a, mode) },
       mode === "image" ? h("img", { src: fileUrl(a, (a.images || [a.files.png])[0]), alt: "", loading: "lazy" })
