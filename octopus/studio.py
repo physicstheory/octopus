@@ -154,11 +154,12 @@ def asset_dir(aid: str) -> Path | None:
     return folder if folder.parent == ASSETS_DIR.resolve() and folder.is_dir() else None
 
 
-def list_assets(kind: str | None = None) -> list[dict]:
+def list_assets(kind: str | None = None, owner: str | None = None) -> list[dict]:
     out = []
     for folder in sorted(ASSETS_DIR.iterdir(), reverse=True):
         meta = read_meta(folder.name)
-        if meta and (kind is None or meta.get("kind") == kind) and meta.get("files"):
+        if (meta and (kind is None or meta.get("kind") == kind) and meta.get("files")
+                and (owner is None or meta.get("owner") in (owner, None))):
             out.append(meta)
     return out
 
@@ -170,7 +171,7 @@ def delete_asset(aid: str) -> None:
     shutil.rmtree(folder)
 
 
-def save_upload(name: str, data_url: str) -> dict:
+def save_upload(name: str, data_url: str, owner: str | None = None) -> dict:
     """Save an image the user attached (data: URL) as an 'upload' asset."""
     from PIL import Image
 
@@ -184,7 +185,7 @@ def save_upload(name: str, data_url: str) -> dict:
     img.load()
     img = img.convert("RGBA") if img.mode in ("RGBA", "LA", "P") else img.convert("RGB")
     img.thumbnail((1536, 1536))
-    aid, folder = new_asset("upload", name=name[:80])
+    aid, folder = new_asset("upload", name=name[:80], owner=owner)
     img.save(folder / "image.png")
     meta = {**read_meta(aid), "files": {"png": "image.png"}}
     write_meta(folder, meta)
@@ -321,7 +322,7 @@ class Studio:
         return out
 
     def make_image(self, prompt: str, model: str = "sdxl", aspect: str = "1:1", count: int = 1, seed: int | None = None,
-                   where: str = "auto"):
+                   where: str = "auto", owner: str | None = None):
         model = model if model in IMAGE_MODELS else "sdxl"
         w, h = {"1:1": (1024, 1024), "16:9": (1344, 768), "9:16": (768, 1344), "4:3": (1152, 896)}.get(aspect, (1024, 1024))
         count = max(1, min(int(count), 4))
@@ -331,7 +332,7 @@ class Studio:
             if place == "local":
                 self.free_others()
             used = "flux" if place == "cloud" else model
-            aid, folder = new_asset("image", prompt=prompt, model=used, aspect=aspect, where=place)
+            aid, folder = new_asset("image", prompt=prompt, model=used, aspect=aspect, where=place, owner=owner)
             try:
                 if place == "mock":
                     images = _mock_images(prompt, w, h, count, emit)
@@ -359,7 +360,7 @@ class Studio:
 
     def make_model(self, prompt: str = "", image_id: str | None = None, preset: str = "quality", texture: bool = True,
                    finish: "meshkit.FinishOptions | None" = None, seed: int | None = None, image_name: str | None = None,
-                   where: str = "auto"):
+                   where: str = "auto", owner: str | None = None):
         preset = preset if preset in MODEL3D else "quality"
 
         def job(emit):
@@ -368,7 +369,7 @@ class Studio:
             place = resolve_where("model3d", where)
             if place == "local":
                 self.free_others()
-            aid, folder = new_asset("model", prompt=prompt, preset=preset, source="image" if image_id else "text", where=place)
+            aid, folder = new_asset("model", prompt=prompt, preset=preset, source="image" if image_id else "text", where=place, owner=owner)
             try:
                 meta = self._make_model(aid, folder, place, prompt, image_id, image_name, preset, texture, finish, seed, emit)
             except Exception:

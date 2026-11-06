@@ -91,7 +91,7 @@ async function* sse(res) {
 // ---------- state ----------
 const S = {
   cfg: null,
-  chats: store.get("octopus.chats", []),
+  chats: [],
   currentId: null,
   mode: store.get("octopus.mode", "chat"),
   choice: store.get("octopus.choice", { base: null, brain: null }),
@@ -99,7 +99,32 @@ const S = {
   streaming: null, // { id, controller }
   view: "chat",
 };
-const saveChats = () => store.set("octopus.chats", S.chats.slice(0, 300));
+// Chats live on the Octopus server under your account, so each person sees only their own.
+let chatTimer = 0;
+function saveChats() {
+  clearTimeout(chatTimer);
+  chatTimer = setTimeout(pushChats, 400);
+}
+async function pushChats() {
+  chatTimer = 0;
+  if (!S.cfg?.user) return;
+  const body = JSON.stringify(S.chats.filter((c) => c.messages.length).slice(0, 300));
+  try { await fetch("/api/me/chats", { method: "PUT", headers: { "Content-Type": "application/json" }, body, credentials: "same-origin", keepalive: body.length < 60000 }); }
+  catch {}
+}
+addEventListener("pagehide", () => { if (chatTimer) { clearTimeout(chatTimer); pushChats(); } });
+async function loadChats() {
+  let chats = await api("/api/me/chats").catch(() => []);
+  // First sign-in after updating: the owner gets the chats the old version kept in this browser.
+  const old = store.get("octopus.chats", null);
+  if (old?.length && S.cfg.user?.role === "owner") {
+    const have = new Set(chats.map((c) => c.id));
+    chats = [...chats, ...old.filter((c) => !have.has(c.id))];
+    store.set("octopus.chats", []);
+    S.chats = chats; pushChats();
+  }
+  S.chats = chats;
+}
 const current = () => S.chats.find((c) => c.id === S.currentId);
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
@@ -112,9 +137,10 @@ applyTheme(store.get("octopus.theme", "system"));
 $("#theme-toggle").addEventListener("click", () => {
   const order = ["system", "light", "dark"];
   const next = order[(order.indexOf(store.get("octopus.theme", "system")) + 1) % 3];
-  store.set("octopus.theme", next); applyTheme(next);
-  toast(`Appearance: ${next[0].toUpperCase() + next.slice(1)}`);
+  store.set("octopus.theme", next); applyTheme(next); themeLabel();
 });
+function themeLabel() { const t = store.get("octopus.theme", "system"); $("#theme-label").textContent = t[0].toUpperCase() + t.slice(1); }
+themeLabel();
 
 let toastTimer;
 function toast(msg) {
@@ -130,27 +156,64 @@ async function boot() {
     document.body.append(h("p", { class: "error", style: "position:relative;z-index:2;padding:20px" }, "Couldn't reach Octopus: " + e.message));
     return;
   }
-  if (!S.cfg.authed) return showLogin();
+  if (!S.cfg.authed) return showLogin(S.cfg.needsSetup ? "setup" : "signin");
   showApp();
 }
 
-function showLogin() {
-  $("#app").hidden = true; $("#login").hidden = false; $("#login-password").focus();
+let authMode = "signin";
+function showLogin(mode = "signin") {
+  authMode = mode;
+  const setup = mode === "setup", signup = mode === "signup" || setup;
+  $("#app").hidden = true; $("#login").hidden = false;
+  $("#auth-title").textContent = setup ? "Welcome to Octopus" : signup ? "Create your account" : "Welcome back";
+  $("#auth-sub").textContent = setup ? "Create the owner account for this Octopus. Everyone who uses it gets their own account, chats and creations."
+    : signup ? "Your own chats, 3D models and images, separate from everyone else's." : "Sign in to your Octopus account.";
+  $("#auth-name").hidden = !signup;
+  $("#auth-code").hidden = !(signup && S.cfg.codeRequired);
+  $("#login-password").autocomplete = signup ? "new-password" : "current-password";
+  $("#login-password").placeholder = signup ? "Password (6 or more characters)" : "Password";
+  $("#auth-submit").textContent = signup ? "Create account" : "Sign in";
+  $("#login-error").textContent = "";
+  const sw = $("#auth-switch"); sw.replaceChildren();
+  if (!setup) {
+    if (signup) sw.append("Already have an account? ", h("button", { type: "button", class: "linkish", onclick: () => showLogin("signin") }, "Sign in"));
+    else if (S.cfg.signupsOpen) sw.append("New here? ", h("button", { type: "button", class: "linkish", onclick: () => showLogin("signup") }, "Create an account"));
+  }
+  (signup ? $("#auth-name") : $("#auth-username")).focus();
 }
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   $("#login-error").textContent = "";
+  const signup = authMode !== "signin";
+  const body = { username: $("#auth-username").value, password: $("#login-password").value };
+  if (signup) Object.assign(body, { name: $("#auth-name").value, code: $("#auth-code").value });
+  $("#auth-submit").disabled = true;
   try {
-    await api("/api/login", { body: { password: $("#login-password").value } });
+    await api(signup ? "/api/signup" : "/api/login", { body });
     S.cfg = await api("/api/config");
+    $("#login-password").value = ""; $("#auth-code").value = "";
     showApp();
   } catch (err) { $("#login-error").textContent = err.message; }
+  finally { $("#auth-submit").disabled = false; }
 });
-$("#logout").addEventListener("click", async () => { await api("/api/logout", { body: {} }); location.reload(); });
+$("#logout").addEventListener("click", async () => { clearTimeout(chatTimer); await pushChats(); await api("/api/logout", { body: {} }); location.reload(); });
 
-function showApp() {
+// ---------- account menu ----------
+const accountBtn = $("#account-btn"), accountMenu = $("#account-menu");
+function renderAccount() {
+  const u = S.cfg.user || {};
+  $("#account-name").textContent = u.name || "Account";
+  $("#account-role").textContent = u.role === "owner" ? "Owner" : "@" + (u.username || "");
+  $("#account-initials").textContent = (u.name || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+}
+accountBtn.addEventListener("click", (e) => { e.stopPropagation(); accountMenu.hidden = !accountMenu.hidden; accountBtn.setAttribute("aria-expanded", String(!accountMenu.hidden)); });
+document.addEventListener("click", (e) => { if (!accountMenu.hidden && !accountMenu.contains(e.target)) { accountMenu.hidden = true; accountBtn.setAttribute("aria-expanded", "false"); } });
+accountMenu.addEventListener("click", (e) => { if (e.target.closest("#settings-btn, #logout")) accountMenu.hidden = true; });
+
+async function showApp() {
   $("#login").hidden = true; $("#app").hidden = false;
-  $("#logout").hidden = !S.cfg.passwordRequired;
+  renderAccount();
+  await loadChats();
   if (!S.choice.base) S.choice.base = S.cfg.defaultBase;
   if (S.choice.brain && !S.cfg.brains.some((b) => b.id === S.choice.brain)) S.choice.brain = null;
   renderModelButton();
@@ -192,7 +255,7 @@ function renderHistory() {
     if (g !== gi) { gi = g; nav.append(h("h6", {}, groups[g][0])); }
     nav.append(h("div", { class: "chat-item" + (c.id === S.currentId && S.view === "chat" ? " active" : ""), role: "button", tabindex: "0",
       onclick: () => { openChat(c.id); closeMobile(); }, onkeydown: (e) => e.key === "Enter" && openChat(c.id) },
-      c.mode && c.mode !== "chat" ? h("span", { class: "mode-dot m-" + c.mode, title: { code: "Code", model: "Modelling", image: "Image" }[c.mode] }) : null,
+      h("span", { class: "mode-dot m-" + (c.mode || "chat"), title: { chat: "Chat", code: "Code", model: "Modelling", image: "Image" }[c.mode || "chat"] }),
       h("span", { class: "title" }, c.title),
       h("button", { class: "del", title: "Delete chat", "aria-label": "Delete chat", onclick: (e) => { e.stopPropagation(); deleteChat(c.id); } }, svg(ICON.trash))));
   }
@@ -237,16 +300,32 @@ async function openModelMenu() {
 }
 
 // ---------- mode ----------
-const seg = $(".segmented"), thumb = $(".seg-thumb");
-$$(".segmented button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+const MODES = [
+  ["chat", "Chat", "Everyday questions, writing and ideas", '<path d="M5 18.5 3.5 21l.8-4A8.5 8.5 0 1 1 7.8 19.7Z"/>'],
+  ["code", "Code", "Write, explain and fix code", '<path d="m8.5 7.5-5 4.5 5 4.5M15.5 7.5l5 4.5-5 4.5M13.5 5l-3 14"/>'],
+  ["model", "3D", "Game-ready 3D models from words or pictures", '<path d="M12 3 4 7.5v9L12 21l8-4.5v-9Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>'],
+  ["image", "Image", "Pictures, concept art and icons", '<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5"/>'],
+];
+const modeBtn = $("#mode-chip"), modeMenu = $("#mode-menu");
+function pickMode(mode) {
+  if (S.view !== "chat") showChatView();
+  if (current()?.messages.length && mode !== S.mode) { setMode(mode); newChat(); } else setMode(mode);
+}
+modeBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (!modeMenu.hidden) { modeMenu.hidden = true; return; }
+  modeMenu.replaceChildren(...MODES.map(([id, label, blurb, icon]) => h("button", { type: "button", class: "menu-item mode-item", role: "menuitemradio",
+    "aria-selected": String(id === S.mode), "data-m": id, onclick: () => { modeMenu.hidden = true; pickMode(id); $("#input").focus(); } },
+    h("span", { class: "mi-icon" }, svg(icon)), h("b", {}, label), svg(ICON.check, "check"), h("small", {}, blurb))));
+  modeMenu.hidden = false;
+});
+document.addEventListener("click", (e) => { if (!modeMenu.hidden && !modeMenu.contains(e.target)) modeMenu.hidden = true; });
+
 function setMode(mode, persist = true) {
   S.mode = mode; if (persist) store.set("octopus.mode", mode);
   document.body.dataset.mode = mode;
-  const btn = $(`.segmented button[data-mode="${mode}"]`);
-  $$(".segmented button").forEach((b) => b.setAttribute("aria-selected", String(b === btn)));
-  requestAnimationFrame(() => { thumb.style.width = btn.offsetWidth + "px"; thumb.style.transform = `translateX(${btn.offsetLeft - 3}px)`; });
-  $("#mode-chip").textContent = { chat: "Chat", code: S.cfg?.allowRun ? "Code · run on this computer" : "Code", model: "3D", image: "Image" }[mode];
-  $("#mode-chip").hidden = mode === "model" || mode === "image";
+  $("#mode-chip-label").textContent = { chat: "Chat", code: "Code", model: "3D", image: "Image" }[mode];
+  $(".model-picker").hidden = mode === "model" || mode === "image";
   $("#input").placeholder = {
     chat: "Message Octopus", code: "Describe what to build, or paste code and an error",
     model: "Describe a 3D model, or attach a picture of it", image: "Describe an image",
@@ -259,7 +338,6 @@ function setMode(mode, persist = true) {
   const c = current(); if (c && !c.messages.length) c.mode = mode;
   if (!current()?.messages.length) renderEmpty();
 }
-addEventListener("resize", () => setMode(S.mode, false));
 
 // ---------- chats ----------
 function newChat() {
@@ -593,7 +671,7 @@ const T = { datasets: [], selected: new Set(store.get("octopus.trainSel", [])), 
 function showChatView() {
   S.view = "chat"; app.classList.remove("train-view");
   $("#train").hidden = true; $("#thread").hidden = false; $("#composer-wrap").hidden = false;
-  $(".topbar .segmented").hidden = false; $("#nav-train").classList.remove("active");
+  $("#nav-train").classList.remove("active");
   if (location.hash) history.replaceState(null, "", "/");
   $$(".type-item").forEach((b) => b.classList.toggle("active", b.dataset.type === S.mode));
   renderThread();
@@ -603,7 +681,7 @@ async function openTrain() {
   S.view = "train"; app.classList.add("train-view");
   $$(".type-item").forEach((b) => b.classList.remove("active"));
   $("#thread").hidden = true; hideEmpty(); $("#composer-wrap").hidden = true;
-  $(".topbar .segmented").hidden = true; $("#nav-train").classList.add("active");
+  $("#nav-train").classList.add("active");
   history.replaceState(null, "", "#train");
   renderHistory();
   const root = $("#train"); root.hidden = false;
@@ -1124,7 +1202,7 @@ function studioPanel(mode) {
     : local ? `Runs on your ${S.cfg.device || "GPU"}.`
     : mode === "model" ? `Runs free on Hugging Face's cloud GPUs with ${st.cloud3d?.[0] || "Hunyuan3D"}, then Octopus finishes the mesh on this computer.`
     : "Runs free on Hugging Face's cloud GPUs with FLUX.1 schnell.";
-  const quota = !local && !S.cfg.mock && !S.settings?.hasToken
+  const quota = !local && !S.cfg.mock && !S.settings?.hasToken && S.cfg.user?.role === "owner"
     ? h("button", { class: "linkish", onclick: openSettings }, "Add a free Hugging Face token for more daily generations") : null;
   return h("div", { class: "cloud glass studio-panel" },
     h("p", {}, svg(local ? ICON.cube : ICON.cloud), h("span", {}, where, " ", quota)),
@@ -1139,37 +1217,92 @@ async function loadSettings() { S.settings = await api("/api/settings").catch(()
 function openSettings() {
   $("#settings-modal")?.remove();
   const s = S.settings || {};
+  const u = S.cfg.user || {};
+  const owner = u.role === "owner";
+  const close = () => modal.remove();
+
+  // --- your account ---
+  const nameIn = h("input", { type: "text", value: u.name || "", autocomplete: "name" });
+  const oldPw = h("input", { type: "password", placeholder: "Current password", autocomplete: "current-password" });
+  const newPw = h("input", { type: "password", placeholder: "New password (6 or more characters)", autocomplete: "new-password" });
+  const accErr = h("p", { class: "error" });
+  const saveAccount = async () => {
+    accErr.textContent = "";
+    try {
+      const body = { name: nameIn.value };
+      if (newPw.value) Object.assign(body, { old_password: oldPw.value, new_password: newPw.value });
+      const r = await api("/api/me", { body });
+      S.cfg.user = r.user; renderAccount(); oldPw.value = newPw.value = "";
+      toast(body.new_password ? "Password changed. Other devices were signed out." : "Account saved");
+    } catch (e) { accErr.textContent = e.message; }
+  };
+  const accountSection = h("section", { class: "set-section" },
+    h("h4", {}, "Your account"),
+    h("div", { class: "acct-head" }, h("span", { class: "initials big" }, $("#account-initials").textContent),
+      h("div", {}, h("b", {}, u.name), h("small", { class: "muted" }, `@${u.username} · ${owner ? "Owner" : "Member"}`))),
+    h("div", { class: "field" }, h("label", {}, "Name"), nameIn),
+    h("div", { class: "field" }, h("label", {}, "Change password"), oldPw, newPw),
+    accErr,
+    h("div", { class: "row", style: "justify-content:flex-end" }, h("button", { class: "btn-ghost glass-btn", onclick: saveAccount }, "Save account")));
+
+  // --- people (owner only) ---
+  const people = h("div", { class: "people" });
+  const signups = h("input", { type: "checkbox" });
+  const renderPeople = (d) => {
+    signups.checked = d.signupsOpen;
+    people.replaceChildren(...d.users.map((x) => h("div", { class: "person" },
+      h("span", { class: "initials" }, x.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()),
+      h("div", { class: "grow" }, h("b", {}, x.name), h("small", { class: "muted" }, `@${x.username}${x.role === "owner" ? " · Owner" : ""}`)),
+      x.id !== u.id && x.role !== "owner" ? h("button", { class: "btn-ghost glass-btn danger", onclick: async (e) => {
+        const b = e.currentTarget;
+        if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = "Remove? Click again"; return; }
+        try { await api(`/api/accounts/${x.id}`, { method: "DELETE" }); renderPeople(await api("/api/accounts")); toast(`Removed ${x.name}`); }
+        catch (err) { toast(err.message); }
+      } }, "Remove") : null)));
+  };
+  signups.addEventListener("change", async () => {
+    try { renderPeople(await api("/api/accounts", { body: { signupsOpen: signups.checked } })); } catch (e) { toast(e.message); }
+  });
+  const peopleSection = owner ? h("section", { class: "set-section" },
+    h("h4", {}, "People on this Octopus"),
+    h("label", { class: "check-row" }, signups, h("span", {}, "Let others create accounts from the sign-in screen")),
+    people) : null;
+  if (owner) api("/api/accounts").then(renderPeople).catch(() => {});
+
+  // --- studio (owner only) ---
   const tok = h("input", { type: "password", placeholder: s.hasToken ? `Saved (${s.tokenHint}). Paste a new one to replace it` : "hf_…", autocomplete: "off", spellcheck: "false" });
   const whereSel = h("select", {}, [["auto", "Automatic"], ["local", "This computer (NVIDIA GPU)"], ["cloud", "Free cloud (Hugging Face)"]]
     .map(([v, l]) => h("option", { value: v, selected: v === (s.studioWhere || "auto") }, l)));
   const err = h("p", { class: "error" });
-  const close = () => modal.remove();
   const save = async (clear = false) => {
     err.textContent = "";
     try {
       const body = { studio_where: whereSel.value };
       if (clear) body.hf_token = ""; else if (tok.value.trim()) body.hf_token = tok.value.trim();
       S.settings = await api("/api/settings", { body });
-      close(); toast(clear ? "Token removed" : "Settings saved"); setMode(S.mode, false);
+      toast(clear ? "Token removed" : "Settings saved"); setMode(S.mode, false);
     } catch (e) { err.textContent = e.message; }
   };
+  const studioSection = owner ? h("section", { class: "set-section" },
+    h("h4", {}, "3D and images"),
+    h("div", { class: "field" }, h("label", {}, "Where to make images and 3D models"), whereSel,
+      h("p", { class: "muted" }, S.cfg.studio?.local?.model3d ? "Your NVIDIA GPU is set up for 3D." : "This computer has no NVIDIA GPU set up for 3D, so Automatic uses the free cloud.")),
+    h("div", { class: "field" }, h("label", {}, "Hugging Face token (free, optional)"), tok,
+      h("p", { class: "muted" }, "The free cloud gives everyone a small daily allowance of GPU time. A free Hugging Face account gets more. ",
+        h("a", { href: "https://huggingface.co/join", target: "_blank", rel: "noopener" }, "Create an account"), ", then make a ",
+        h("a", { href: "https://huggingface.co/settings/tokens/new?tokenType=read", target: "_blank", rel: "noopener" }, "Read token"),
+        " and paste it here. It stays on this computer and is shared by everyone on this Octopus.")),
+    err,
+    h("div", { class: "row", style: "justify-content:flex-end" },
+      s.hasToken && !s.tokenFromEnv ? h("button", { class: "btn-ghost glass-btn", onclick: () => save(true) }, "Remove token") : null,
+      h("button", { class: "btn-primary", onclick: () => save() }, "Save"))) : null;
+
   const modal = h("div", { id: "settings-modal", class: "modal", onclick: (e) => { if (e.target === modal) close(); } },
     h("div", { class: "modal-card glass settings-card", role: "dialog", "aria-label": "Settings" },
-      h("div", { class: "modal-head" }, h("b", {}, "Settings"), h("span", { class: "muted" }, "Saved on this computer"),
-        h("button", { class: "icon-btn", "aria-label": "Close settings", onclick: close }, svg('<path d="M7 7l10 10M17 7 7 17"/>'))),
-      h("div", { class: "settings-body" },
-        h("div", { class: "field" }, h("label", {}, "Where to make images and 3D models"), whereSel,
-          h("p", { class: "muted" }, S.cfg.studio?.local?.model3d ? "Your NVIDIA GPU is set up for 3D." : "This computer has no NVIDIA GPU set up for 3D, so Automatic uses the free cloud.")),
-        h("div", { class: "field" }, h("label", {}, "Hugging Face token (free, optional)"), tok,
-          h("p", { class: "muted" }, "The free cloud gives everyone a small daily allowance of GPU time. A free Hugging Face account gets more. ",
-            h("a", { href: "https://huggingface.co/join", target: "_blank", rel: "noopener" }, "Create an account"), ", then make a ",
-            h("a", { href: "https://huggingface.co/settings/tokens/new?tokenType=read", target: "_blank", rel: "noopener" }, "Read token"),
-            " and paste it here. It stays on this computer.")),
-        err,
-        h("div", { class: "row", style: "justify-content:flex-end" },
-          s.hasToken && !s.tokenFromEnv ? h("button", { class: "btn-ghost glass-btn", onclick: () => save(true) }, "Remove token") : null,
-          h("button", { class: "btn-primary", onclick: () => save() }, "Save")))));
-  document.body.append(modal); (s.hasToken ? whereSel : tok).focus();
+      h("div", { class: "modal-head" }, h("b", {}, "Settings"),
+        h("button", { class: "icon-btn", "aria-label": "Close settings", onclick: close, style: "margin-left:auto" }, svg('<path d="M7 7l10 10M17 7 7 17"/>'))),
+      h("div", { class: "settings-body" }, accountSection, peopleSection, studioSection)));
+  document.body.append(modal); nameIn.focus();
 }
 $("#settings-btn")?.addEventListener("click", () => { openSettings(); });
 

@@ -18,24 +18,24 @@ for _d in (DATA_DIR, ADAPTERS_DIR, RUN_DIR, INCOMING_DIR):
 
 # Open-weights base models Octopus can start from. All are Apache-2.0 licensed.
 BASE_MODELS: dict[str, dict] = {
-    "Qwen/Qwen2.5-Coder-1.5B-Instruct": {
-        "label": "Octopus Base 1.5B",
-        "blurb": "Default. Fast on most GPUs (about 4 GB VRAM). Good chat and coding.",
-        "vram": 4,
-    },
     "Qwen/Qwen2.5-Coder-0.5B-Instruct": {
-        "label": "Octopus Mini 0.5B",
-        "blurb": "Tiny and very fast. Fine for quick tests and older GPUs.",
+        "label": "Hatchling",
+        "blurb": "Tiny and very fast, for quick questions and older computers. About 1 to 2 GB.",
         "vram": 2,
     },
+    "Qwen/Qwen2.5-Coder-1.5B-Instruct": {
+        "label": "Reef",
+        "blurb": "Everyday default. Quick and capable at chat and code. About 2 to 4 GB of memory.",
+        "vram": 4,
+    },
     "Qwen/Qwen2.5-Coder-3B-Instruct": {
-        "label": "Octopus Plus 3B",
-        "blurb": "Noticeably smarter. About 8 GB VRAM.",
+        "label": "Abyss",
+        "blurb": "Thinks deeper. Noticeably smarter answers. About 4 to 8 GB.",
         "vram": 8,
     },
     "Qwen/Qwen2.5-Coder-7B-Instruct": {
-        "label": "Octopus Pro 7B",
-        "blurb": "Strongest coder here. 16 GB VRAM, or 8 GB with 4-bit mode.",
+        "label": "Kraken",
+        "blurb": "The strongest coder here. Slow without a strong GPU. About 8 to 16 GB.",
         "vram": 16,
     },
 }

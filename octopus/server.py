@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import data as datasets
-from . import meshkit, prefs
+from . import accounts, meshkit, prefs
 from . import studio as studio_mod
 from .config import ADAPTERS_DIR, BASE_MODELS, COLAB_URL, DEFAULT_BASE, INCOMING_DIR, WEB_DIR, settings
 from .engine import StopFlag
@@ -87,8 +87,6 @@ def list_brains() -> list[dict]:
 # ---------- auth & request hygiene ----------
 
 COOKIE = "octopus_session"
-_secret = hashlib.sha256(("octopus:" + settings.password).encode()).digest()
-_token = hmac.new(_secret, b"ok", hashlib.sha256).hexdigest()
 _attempts: dict[str, list] = {}
 
 
@@ -99,18 +97,35 @@ def is_local(req: Request) -> bool:
     return bool(req.client) and req.client.host in LOOPBACK and host in LOOPBACK and not forwarded
 
 
+def reachable(req: Request) -> bool:
+    """Without OCTOPUS_PASSWORD only this computer may use Octopus (blocks tunnels and DNS rebinding)."""
+    return bool(settings.password) or is_local(req)
+
+
+def current_user(req: Request) -> dict | None:
+    if not reachable(req):
+        return None
+    return accounts.user_for(req.cookies.get(COOKIE, ""))
+
+
 def authed(req: Request) -> bool:
-    if not settings.password:
-        return is_local(req)
-    return hmac.compare_digest(req.cookies.get(COOKIE, ""), _token)
+    return current_user(req) is not None
 
 
-def need_auth(req: Request) -> None:
-    if not settings.password and not is_local(req):
-        # Without a password, only this computer may use Octopus (blocks tunnels and DNS rebinding).
+def need_auth(req: Request) -> dict:
+    if not reachable(req):
         raise HTTPException(403, "Set OCTOPUS_PASSWORD to use Octopus from another device.")
-    if not authed(req):
+    user = current_user(req)
+    if not user:
         raise HTTPException(401, "Not signed in")
+    return user
+
+
+def need_owner(req: Request) -> dict:
+    user = need_auth(req)
+    if user["role"] != "owner":
+        raise HTTPException(403, "Only the owner of this Octopus can do that.")
+    return user
 
 
 RAW_UPLOADS = {"/api/import"}
@@ -137,30 +152,120 @@ async def guard(request: Request, call_next):
     return resp
 
 
-@app.post("/api/login")
-async def login(req: Request):
+def _throttle(req: Request) -> tuple[str, int, float]:
     ip = req.client.host if req.client else "?"
     n, t = _attempts.get(ip, [0, time.time()])
     if time.time() - t > 900:
         n, t = 0, time.time()
     if n >= 10:
         raise HTTPException(429, "Too many attempts. Try again in a few minutes.")
+    return ip, n, t
+
+
+def _signed_in(req: Request, user: dict) -> JSONResponse:
+    resp = JSONResponse({"ok": True, "user": accounts.public(user)})
+    resp.set_cookie(COOKIE, accounts.start_session(user["id"]), httponly=True, samesite="strict",
+                    max_age=accounts.SESSION_DAYS * 86400, secure=req.url.scheme == "https")
+    return resp
+
+
+@app.post("/api/signup")
+async def signup(req: Request):
+    if not reachable(req):
+        raise HTTPException(403, "Set OCTOPUS_PASSWORD to use Octopus from another device.")
+    ip, n, t = _throttle(req)
     body = await req.json()
-    if not settings.password or hmac.compare_digest(str(body.get("password", "")), settings.password):
-        _attempts.pop(ip, None)
-        resp = JSONResponse({"ok": True})
-        resp.set_cookie(COOKIE, _token, httponly=True, samesite="strict", max_age=60 * 60 * 24 * 30,
-                        secure=req.url.scheme == "https")
-        return resp
-    _attempts[ip] = [n + 1, t]
-    raise HTTPException(401, "Wrong password")
+    if not is_local(req) and not hmac.compare_digest(str(body.get("code", "")), settings.password):
+        _attempts[ip] = [n + 1, t]
+        raise HTTPException(401, "That invite code isn't right.")
+    try:
+        user = await _in_thread(accounts.create, body.get("name", ""), body.get("username", ""), str(body.get("password", "")))
+    except accounts.AccountError as exc:
+        raise HTTPException(400, str(exc))
+    return _signed_in(req, user)
+
+
+@app.post("/api/login")
+async def login(req: Request):
+    if not reachable(req):
+        raise HTTPException(403, "Set OCTOPUS_PASSWORD to use Octopus from another device.")
+    ip, n, t = _throttle(req)
+    body = await req.json()
+    user = await _in_thread(accounts.verify, body.get("username", ""), str(body.get("password", "")))
+    if not user:
+        _attempts[ip] = [n + 1, t]
+        raise HTTPException(401, "Wrong username or password.")
+    _attempts.pop(ip, None)
+    return _signed_in(req, user)
 
 
 @app.post("/api/logout")
-async def logout():
+async def logout(req: Request):
+    accounts.end_session(req.cookies.get(COOKIE, ""))
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(COOKIE)
     return resp
+
+
+@app.get("/api/me")
+def me(req: Request):
+    return accounts.public(need_auth(req))
+
+
+@app.post("/api/me")
+async def update_me(req: Request):
+    user = need_auth(req)
+    b = await req.json()
+    try:
+        u = await _in_thread(accounts.update, user["id"], b.get("name"), b.get("old_password"), b.get("new_password"))
+    except accounts.AccountError as exc:
+        raise HTTPException(400, str(exc))
+    if b.get("new_password"):  # other sessions were signed out; keep this one
+        return _signed_in(req, u)
+    return {"ok": True, "user": accounts.public(u)}
+
+
+@app.get("/api/me/chats")
+def my_chats(req: Request):
+    return accounts.load_chats(need_auth(req)["id"])
+
+
+@app.put("/api/me/chats")
+async def save_my_chats(req: Request):
+    user = need_auth(req)
+    raw = await req.body()
+    try:
+        await _in_thread(accounts.save_chats, user["id"], raw)
+    except (accounts.AccountError, ValueError) as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True}
+
+
+@app.get("/api/accounts")
+def list_accounts(req: Request):
+    need_owner(req)
+    return {"users": accounts.list_users(), "signupsOpen": accounts.signups_open()}
+
+
+@app.post("/api/accounts")
+async def account_settings(req: Request):
+    need_owner(req)
+    b = await req.json()
+    if "signupsOpen" in b:
+        accounts.set_signups(bool(b["signupsOpen"]))
+    return {"users": accounts.list_users(), "signupsOpen": accounts.signups_open()}
+
+
+@app.delete("/api/accounts/{uid}")
+def delete_account(uid: str, req: Request):
+    me_ = need_owner(req)
+    if uid == me_["id"]:
+        raise HTTPException(400, "You can't remove your own account.")
+    try:
+        accounts.remove(uid)
+    except accounts.AccountError as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True}
 
 
 # ---------- config & models ----------
@@ -171,8 +276,11 @@ def run_allowed(req: Request) -> bool:
 
 @app.get("/api/config")
 def config(req: Request):
-    ok = authed(req)
-    out = {"authed": ok, "passwordRequired": bool(settings.password), "mock": settings.mock}
+    user = current_user(req)
+    ok = user is not None
+    out = {"authed": ok, "needsSetup": not accounts.has_accounts(), "signupsOpen": accounts.signups_open(),
+           "codeRequired": not is_local(req), "mock": settings.mock,
+           "user": accounts.public(user) if user else None}
     if ok:
         allow = run_allowed(req)
         langs = []
@@ -335,18 +443,18 @@ def _where(b: dict) -> str:
 
 @app.post("/api/generate/image")
 async def gen_image(req: Request):
-    need_auth(req)
+    user = need_auth(req)
     _studio_ready()
     if not studio_mod.capabilities()["image"]:
         raise HTTPException(409, "Image generation isn't set up. Run start again to finish installing.")
     b = await req.json()
     return _studio_stream(studio.make_image(str(b.get("prompt", ""))[:2000], b.get("model", "sdxl"), b.get("aspect", "1:1"),
-                                            int(b.get("count", 1)), b.get("seed"), _where(b)))
+                                            int(b.get("count", 1)), b.get("seed"), _where(b), owner=user["id"]))
 
 
 @app.post("/api/generate/model")
 async def gen_model(req: Request):
-    need_auth(req)
+    user = need_auth(req)
     _studio_ready()
     if not studio_mod.capabilities()["model3d"]:
         raise HTTPException(409, "3D modelling isn't set up. Run start again to finish installing.")
@@ -354,7 +462,7 @@ async def gen_model(req: Request):
     finish = meshkit.FinishOptions.from_request(b) if b.get("finish", True) else None
     return _studio_stream(studio.make_model(str(b.get("prompt", ""))[:2000], b.get("image_id"), b.get("preset", "quality"),
                                             bool(b.get("texture", True)), finish, b.get("seed"), b.get("image_name"),
-                                            _where(b)))
+                                            _where(b), owner=user["id"]))
 
 
 @app.post("/api/assets/{aid}/refinish")
@@ -378,7 +486,7 @@ def get_settings(req: Request):
 
 @app.post("/api/settings")
 async def set_settings(req: Request):
-    need_auth(req)
+    need_owner(req)
     b = await req.json()
     changes = {}
     if "hf_token" in b:
@@ -394,18 +502,17 @@ async def set_settings(req: Request):
 
 @app.post("/api/upload-image")
 async def upload_image(req: Request):
-    need_auth(req)
+    user = need_auth(req)
     b = await req.json()
     try:
-        return await _in_thread(studio_mod.save_upload, str(b.get("name", "image")), b.get("data", ""))
+        return await _in_thread(studio_mod.save_upload, str(b.get("name", "image")), b.get("data", ""), user["id"])
     except Exception as exc:
         raise HTTPException(400, f"Couldn't read that image: {exc}")
 
 
 @app.get("/api/assets")
 def assets(req: Request, kind: str | None = None):
-    need_auth(req)
-    return studio_mod.list_assets(kind)
+    return studio_mod.list_assets(kind, need_auth(req)["id"])
 
 
 @app.delete("/api/assets/{aid}")
@@ -443,7 +550,7 @@ MAX_IMPORT = 20 * 1024**3
 @app.post("/api/import")
 async def import_file(req: Request, kind: str, filename: str, name: str = ""):
     """Import a brain (.gguf or adapter .zip) or a 3D model (.glb/.obj/.stl/.zip) produced elsewhere."""
-    need_auth(req)
+    user = need_auth(req)
     filename = re.sub(r"[^A-Za-z0-9._-]+", "-", filename)[-120:] or "upload.bin"
     ext = filename.lower().rsplit(".", 1)[-1]
     allowed = {"brain": {"gguf", "zip"}, "model": {"glb", "obj", "stl", "zip"}}.get(kind)
@@ -465,7 +572,7 @@ async def import_file(req: Request, kind: str, filename: str, name: str = ""):
         if kind == "brain":
             brain = re.sub(r"[^a-z0-9._-]+", "-", (name or filename.rsplit(".", 1)[0]).lower()).strip("-")[:40] or "brain"
             return await _in_thread(_import_brain, tmp, ext, brain)
-        return await _in_thread(_import_model, tmp, ext, name or filename.rsplit(".", 1)[0])
+        return await _in_thread(_import_model, tmp, ext, name or filename.rsplit(".", 1)[0], user["id"])
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -497,9 +604,9 @@ def _import_brain(tmp, ext: str, brain: str) -> dict:
     return {"ok": True, "brain": out.name}
 
 
-def _import_model(tmp, ext: str, label: str) -> dict:
+def _import_model(tmp, ext: str, label: str, owner: str | None = None) -> dict:
     """Import a model made elsewhere (cloud notebook, Blender, another tool) and finish it for games."""
-    aid, folder = studio_mod.new_asset("model", prompt=label[:80], preset="imported", source="import", where="import")
+    aid, folder = studio_mod.new_asset("model", prompt=label[:80], preset="imported", source="import", where="import", owner=owner)
     ok_name = re.compile(r"[A-Za-z0-9_.-]{1,80}")
     try:
         if ext == "zip":

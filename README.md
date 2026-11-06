@@ -6,9 +6,13 @@ Octopus starts from free open-source models (Qwen 2.5 Coder for chat, Hunyuan3D-
 
 ![Octopus home](docs/home.png)
 
+## Accounts
+
+The first time Octopus opens, you create the **owner** account. Everyone who uses this Octopus gets their own account, and each person sees only their own chats, 3D models and images. Your account menu is at the bottom of the sidebar. In **Settings** the owner can turn new sign-ups on or off and remove accounts. Trained brains and the Hugging Face token are shared by everyone on the same Octopus.
+
 ## Four kinds of chat
 
-Pick one under **New chat** in the sidebar, or with the switcher at the top.
+Pick one in the sidebar, or with the mode button inside the message box. The model menu sits next to the send button.
 
 | | What it does |
 |---|---|
@@ -54,10 +58,10 @@ Pick it from the menu at the top of a chat.
 
 | Model | Memory | Notes |
 |---|---|---|
-| Octopus Mini 0.5B | 1 to 2 GB | Very fast, simplest answers |
-| **Octopus Base 1.5B** | 2 to 4 GB | Default, good balance |
-| Octopus Plus 3B | 4 to 8 GB | Noticeably smarter |
-| Octopus Pro 7B | 8 to 16 GB | Best coder here, slow without a strong GPU |
+| Hatchling (0.5B) | 1 to 2 GB | Very fast, simplest answers |
+| **Reef (1.5B)** | 2 to 4 GB | Default, good balance |
+| Abyss (3B) | 4 to 8 GB | Noticeably smarter |
+| Kraken (7B) | 8 to 16 GB | Best coder here, slow without a strong GPU |
 
 ## Free cloud GPUs
 
@@ -130,7 +134,7 @@ Most people never need these. **Settings** in the sidebar covers where 3D and im
 | `OCTOPUS_PORT` | `8000` | Port for the web UI |
 | `OCTOPUS_4BIT` | `0` | `1` loads chat models in 4-bit on NVIDIA (needs `pip install bitsandbytes`) |
 | `OCTOPUS_HOST` | `127.0.0.1` | `0.0.0.0` lets you use Octopus from your phone on the same Wi-Fi (requires `OCTOPUS_PASSWORD`) |
-| `OCTOPUS_PASSWORD` | none | Password for the sign-in screen. Without one, only this computer can use Octopus |
+| `OCTOPUS_PASSWORD` | none | Invite code needed to create an account from another device. Without one, only this computer can use Octopus |
 | `OCTOPUS_HOME` | `./workspace` | Where datasets, brains, images and 3D models are stored |
 | `HF_TOKEN` | none | A Hugging Face token for more free cloud generations (you can also paste it in **Settings**) |
 

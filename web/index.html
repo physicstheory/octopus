@@ -5,8 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <title>Octopus</title>
   <meta name="description" content="Octopus, your personal AI assistant." />
-  <meta name="theme-color" content="#f7f6f2" media="(prefers-color-scheme: light)" />
-  <meta name="theme-color" content="#232220" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#0c1424" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Octopus" />
@@ -14,18 +13,25 @@
   <link rel="apple-touch-icon" href="/icon-180.png" />
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="stylesheet" href="/vendor/hljs-dark.css" />
+  <link rel="preload" href="/vendor/fonts/sora-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/vendor/fonts/figtree-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <!-- Sign-in -->
+  <!-- Sign-in and account creation -->
   <section id="login" class="login" hidden>
-    <form id="login-form" class="glass login-card">
+    <div class="login-art" aria-hidden="true"></div>
+    <form id="login-form" class="login-card" novalidate>
       <div class="logo-lg" aria-hidden="true"></div>
-      <h1>Octopus</h1>
-      <p class="muted">Enter your password to continue.</p>
+      <h1 id="auth-title">Welcome back</h1>
+      <p class="muted" id="auth-sub">Sign in to your Octopus account.</p>
+      <input id="auth-name" type="text" autocomplete="name" placeholder="Your name" hidden />
+      <input id="auth-username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="Username" required />
       <input id="login-password" type="password" autocomplete="current-password" placeholder="Password" required />
-      <button class="btn-primary" type="submit">Sign in</button>
+      <input id="auth-code" type="password" autocomplete="off" placeholder="Invite code" hidden />
+      <button class="btn-primary" type="submit" id="auth-submit">Sign in</button>
       <p id="login-error" class="error" role="alert"></p>
+      <p class="auth-switch" id="auth-switch"></p>
     </form>
   </section>
 
@@ -70,18 +76,23 @@
       <nav id="history" class="history" aria-label="Chats"></nav>
 
       <div class="sidebar-foot">
-        <button id="theme-toggle" class="foot-btn" title="Toggle light and dark">
-          <svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>
-          <span>Appearance</span>
+        <button id="account-btn" class="account-btn" aria-haspopup="menu" aria-expanded="false">
+          <span class="initials" id="account-initials">?</span>
+          <span class="who"><b id="account-name">Account</b><small id="account-role"></small></span>
+          <svg viewBox="0 0 24 24"><path d="m7 14 5-5 5 5"/></svg>
         </button>
-        <button id="settings-btn" class="foot-btn" title="Settings">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
-          <span>Settings</span>
-        </button>
-        <button id="logout" class="foot-btn" title="Sign out" hidden>
-          <svg viewBox="0 0 24 24"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10"/></svg>
-          <span>Sign out</span>
-        </button>
+        <div id="account-menu" class="menu account-menu" role="menu" hidden>
+          <button id="settings-btn" class="menu-row" role="menuitem">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M4.2 5.6l2.1 2.1M17.7 17.3l2.1 2.1M2.5 12h3M18.5 12h3M4.2 18.4l2.1-2.1M17.7 6.7l2.1-2.1"/></svg>
+            <span>Settings</span></button>
+          <button id="theme-toggle" class="menu-row" role="menuitem">
+            <svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>
+            <span>Appearance</span><small id="theme-label"></small></button>
+          <div class="menu-sep"></div>
+          <button id="logout" class="menu-row" role="menuitem">
+            <svg viewBox="0 0 24 24"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10"/></svg>
+            <span>Sign out</span></button>
+        </div>
       </div>
     </aside>
     <div id="scrim" class="scrim"></div>
@@ -92,31 +103,7 @@
           <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3.5"/><path d="M9.5 4.5v15"/></svg>
         </button>
 
-        <div class="model-picker">
-          <button id="model-btn" class="model-btn glass-btn" aria-haspopup="listbox" aria-expanded="false">
-            <span id="model-label">Octopus</span>
-            <svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg>
-          </button>
-          <div id="model-menu" class="menu glass" role="listbox" hidden></div>
-        </div>
-
         <div class="spacer"></div>
-
-        <div class="segmented glass-btn" role="tablist" aria-label="Mode">
-          <span class="seg-thumb" aria-hidden="true"></span>
-          <button role="tab" data-mode="chat" aria-selected="true">
-            <svg viewBox="0 0 24 24"><path d="M5 18.5 3.5 21l.8-4A8.5 8.5 0 1 1 7.8 19.7Z"/></svg>Chat
-          </button>
-          <button role="tab" data-mode="code" aria-selected="false">
-            <svg viewBox="0 0 24 24"><path d="m8.5 7.5-5 4.5 5 4.5M15.5 7.5l5 4.5-5 4.5M13.5 5l-3 14"/></svg>Code
-          </button>
-          <button role="tab" data-mode="model" aria-selected="false">
-            <svg viewBox="0 0 24 24"><path d="M12 3 4 7.5v9L12 21l8-4.5v-9Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></svg>3D
-          </button>
-          <button role="tab" data-mode="image" aria-selected="false">
-            <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5"/></svg>Image
-          </button>
-        </div>
       </header>
 
       <section id="scroller" class="scroller">
@@ -134,9 +121,20 @@
               <input id="file" type="file" multiple hidden />
               <svg viewBox="0 0 24 24"><path d="m20 11.5-7.8 7.8a5 5 0 0 1-7-7l8.1-8.2a3.3 3.3 0 0 1 4.7 4.7l-8.1 8.1a1.7 1.7 0 0 1-2.4-2.4l7.5-7.4"/></svg>
             </label>
-            <span id="mode-chip" class="mode-chip">Chat</span>
+            <div class="mode-picker">
+              <button type="button" id="mode-chip" class="mode-chip" aria-haspopup="menu" aria-expanded="false" title="Change what this chat does">
+                <span id="mode-chip-label">Chat</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
+              <div id="mode-menu" class="menu up" role="menu" hidden></div>
+            </div>
             <div id="gen-opts" class="gen-opts"></div>
             <div class="spacer"></div>
+            <div class="model-picker">
+              <button type="button" id="model-btn" class="model-btn" aria-haspopup="listbox" aria-expanded="false" title="Choose a model">
+                <span id="model-label">Octopus</span>
+                <svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg>
+              </button>
+              <div id="model-menu" class="menu up right" role="listbox" hidden></div>
+            </div>
             <button id="send" class="send" type="submit" title="Send" aria-label="Send" disabled>
               <svg class="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
               <svg class="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
