@@ -1,0 +1,19 @@
+{
+  "name": "Octopus",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12-bookworm",
+  "hostRequirements": { "cpus": 2, "memory": "8gb", "storage": "32gb" },
+  "containerEnv": {
+    "OCTOPUS_HOME": "/workspaces/octopus-data",
+    "OLLAMA_MODELS": "/workspaces/octopus-data/ollama-models"
+  },
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "postStartCommand": "bash .devcontainer/start.sh",
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": { "label": "Octopus", "onAutoForward": "openBrowser" }
+  },
+  "customizations": {
+    "codespaces": { "openFiles": [".devcontainer/WELCOME.md"] },
+    "vscode": { "settings": { "workbench.startupEditor": "none" } }
+  }
+}

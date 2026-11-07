@@ -1,6 +1,6 @@
 # 🐙 Octopus
 
-Your own AI assistant: chat, coding, game-ready 3D modelling and images, with a clean, simple interface. Chat runs on **your** computer with no API and no subscription. 3D and images run on your NVIDIA GPU if you have one, or on **free cloud GPUs** automatically if you don't. One double-click installs everything, or [run it on a free cloud server](#run-it-in-the-cloud-nothing-to-install) with nothing to install.
+Your own AI assistant: chat, coding, game-ready 3D modelling and images, with a clean, simple interface. Chat runs on **your** computer with no API and no subscription. 3D and images run on your NVIDIA GPU if you have one, or on **free cloud GPUs** automatically if you don't. One double-click installs everything, or [run it free in the cloud](#run-it-in-the-cloud-nothing-to-install) with nothing to install.
 
 Octopus starts from free open-source models (Qwen, Llama, Gemma, Phi and DeepSeek for chat, Hunyuan3D-2 for 3D, SDXL or FLUX for images), and you make it yours by training it on your own examples.
 
@@ -40,7 +40,17 @@ Mesh finishing (clean-up, decimation, UVs, texture baking, LODs) always runs on 
 
 Octopus can run on a free server in the cloud, so it's always online at your own web address and opens on any device, with no install on your computer and no waiting.
 
-### Oracle Cloud (free forever, recommended)
+### GitHub Codespaces (free, no card, recommended)
+
+With a free GitHub account you get 60 hours a month of a cloud computer, with no card needed. Octopus sets itself up there:
+
+1. Open [**codespaces.new/physicstheory/octopus**](https://codespaces.new/physicstheory/octopus?quickstart=1) and press **Create new codespace**.
+2. The first time takes about 5 minutes while it installs. Octopus then opens in a new tab. If the browser blocks it, open the **Ports** tab at the bottom and click the 🌐 next to **Octopus (8000)**.
+3. Create your owner account. You don't need an invite code in your own codespace.
+
+Next time, go to [github.com/codespaces](https://github.com/codespaces) and click your codespace. It's back in under a minute with your chats and models. It stops after 30 minutes without activity in its window; to make that longer (up to 4 hours), change **Default idle timeout** at [github.com/settings/codespaces](https://github.com/settings/codespaces). The free machine has 2 cores, so Reef answers well and bigger models are slow. Only you can open it unless you set the port to **Public** in the Ports tab; other people then need the invite code in `/workspaces/octopus-data/invite-code`.
+
+### Oracle Cloud (free forever, needs a card to sign up)
 
 Oracle's Always Free tier includes a server with 4 cores and 24 GB of memory, which runs Octopus comfortably: Reef and Nautilus answer quickly, and the 7B and 8B models are usable. One paste sets it all up:
 

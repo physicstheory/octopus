@@ -154,6 +154,15 @@ async def guard(request: Request, call_next):
 
 
 ON_SPACE = bool(os.environ.get("SPACE_ID"))  # running on a Hugging Face Space, behind its proxy
+# In GitHub Codespaces a forwarded port is private to the codespace's owner unless they make it public,
+# so the very first account (the owner's) can be created there without the invite code.
+ON_CODESPACE = os.environ.get("CODESPACES") == "true"
+
+
+def code_needed(req: Request) -> bool:
+    if is_local(req):
+        return False
+    return not (ON_CODESPACE and not accounts.has_accounts())
 OLLAMA_BRAINS = HOME / "ollama-brains"  # copies of imported .gguf brains, so a cloud restart can bring them back
 
 
@@ -183,7 +192,7 @@ async def signup(req: Request):
         raise HTTPException(403, "Set OCTOPUS_PASSWORD to use Octopus from another device.")
     ip, n, t = _throttle(req)
     body = await req.json()
-    if not is_local(req) and not hmac.compare_digest(str(body.get("code", "")), settings.password):
+    if code_needed(req) and not hmac.compare_digest(str(body.get("code", "")), settings.password):
         _attempts[ip] = [n + 1, t]
         raise HTTPException(401, "That invite code isn't right.")
     try:
@@ -287,7 +296,7 @@ def config(req: Request):
     user = current_user(req)
     ok = user is not None
     out = {"authed": ok, "needsSetup": not accounts.has_accounts(), "signupsOpen": accounts.signups_open(),
-           "codeRequired": not is_local(req), "mock": settings.mock,
+           "codeRequired": code_needed(req), "mock": settings.mock,
            "user": accounts.public(user) if user else None}
     if ok:
         allow = run_allowed(req)
