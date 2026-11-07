@@ -14,6 +14,7 @@ import gc
 import importlib.util
 import io
 import json
+import os
 import queue
 import re
 import shutil
@@ -367,8 +368,7 @@ class Studio:
             from PIL import Image
 
             place = resolve_where("model3d", where)
-            if place == "local":
-                self.free_others()
+            self.free_others()  # finishing the mesh runs here even for cloud jobs, so give it the chat model's memory
             aid, folder = new_asset("model", prompt=prompt, preset=preset, source="image" if image_id else "text", where=place, owner=owner)
             try:
                 meta = self._make_model(aid, folder, place, prompt, image_id, image_name, preset, texture, finish, seed, emit)
@@ -427,7 +427,7 @@ class Studio:
                 "sources": {"shape": shape.name, "textured": painted.name if painted else None},
                 "textured": bool(painted), "note": note}
         # 3. Game-ready finishing on this computer.
-        meta.update(finish_asset(folder, shape, painted, finish, emit, start=76 if place != "local" else 80))
+        _apply_finish(meta, finish_asset(folder, shape, painted, finish, emit, start=76 if place != "local" else 80))
         write_meta(folder, meta)
         return meta
 
@@ -509,9 +509,27 @@ def finish_asset(folder: Path, shape: Path, painted: Path | None, opts, emit, st
         return {"files": {"glb": "model.glb", "obj": "model.obj", "stl": "model.stl"}, "finish": None,
                 "stats": {"faces": int(len(mesh.faces)), "vertices": int(len(mesh.vertices))}}
     opts.name = "model"
+    # Baking 4K textures needs about 4.5 GB; on a small machine (like a free codespace) that can run it out of memory.
+    note = None
+    try:
+        total_gb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024**3
+    except (ValueError, OSError, AttributeError):
+        total_gb = 0
+    if opts.texture_size > 2048 and 0 < total_gb < 12:
+        opts.texture_size = 2048
+        note = f"Textures were made at 2K instead of 4K, because this computer has {total_gb:.0f} GB of memory."
     out = meshkit.finish(painted or shape, folder, opts, emit, detail_src=shape if painted else None, start=start, end=99)
     out["updated"] = int(time.time())
+    if note:
+        out["finish_note"] = note
     return out
+
+
+def _apply_finish(meta: dict, out: dict) -> None:
+    extra = out.pop("finish_note", None)
+    meta.update(out)
+    if extra:
+        meta["note"] = " ".join(x for x in (meta.get("note"), extra) if x)
 
 
 def refinish(aid: str, opts) -> dict:
@@ -522,7 +540,7 @@ def refinish(aid: str, opts) -> dict:
         raise FileNotFoundError("This model has no source mesh to rebuild from.")
     shape = folder / meta["sources"]["shape"]
     painted = folder / meta["sources"]["textured"] if meta["sources"].get("textured") else None
-    meta.update(finish_asset(folder, shape, painted, opts, lambda *a, **k: None))
+    _apply_finish(meta, finish_asset(folder, shape, painted, opts, lambda *a, **k: None))
     write_meta(folder, meta)
     return meta
 

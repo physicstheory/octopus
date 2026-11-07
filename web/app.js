@@ -61,14 +61,32 @@ function failText(status) {
     : `Request failed (${status})`;
 }
 const NET_ERR = /NetworkError|Failed to fetch|network error|Load failed|input stream|body stream/i;
+// Text for when Octopus's server itself went away, depending on where it runs.
+function serverGoneText(restarted) {
+  if (S.cfg?.hosted) return restarted
+    ? "Octopus restarted in the middle of this job, so it ended. That usually means it ran out of memory. Try a smaller triangle budget or 2K textures, then press Try again."
+    : "Octopus's server isn't answering. It restarts by itself, so wait a minute and press Try again.";
+  return "Octopus stopped running on your computer, so the job ended. Its window (start.bat) was closed or Octopus crashed. "
+    + "Double-click start.bat to start it again. If it crashed, the window and the file workspace/octopus.log show why.";
+}
+
 async function recoverStudio(label) {
+  let missed = 0, restarted = false;
   for (let i = 0; i < 1200; i++) {
     let st = null;
-    try { st = await (await fetch("/healthz", { cache: "no-store" })).json(); } catch {}
-    if (!st) return { error: "Octopus stopped running on your computer, so the job ended. Its window (start.bat) was closed or Octopus crashed. "
-      + "Double-click start.bat to start it again. If it crashed, the window and the file workspace/octopus.log show why." };
+    try { st = await (await fetch("/healthz", { cache: "no-store", credentials: "same-origin" })).json(); } catch {}
+    if (!st) {
+      // A short drop (a proxy hiccup, or the watchdog restarting Octopus) isn't the end: keep checking for about 2 minutes.
+      if (++missed > 40) return { error: serverGoneText(false) };
+      if (label) label.textContent = "Lost the connection to Octopus, reconnecting…";
+      await new Promise((r) => setTimeout(r, 3000));
+      continue;
+    }
+    if (missed) restarted = !st.busy && !st.studio;
+    missed = 0;
     if (!st.busy) {
       if (st.studio?.asset) return { asset: st.studio.asset };
+      if (restarted) return { error: serverGoneText(true) };
       return { error: st.studio?.error || "The connection to Octopus dropped. Press Try again." };
     }
     if (label) label.textContent = "Reconnected. Still working on it…";
@@ -661,7 +679,7 @@ async function generate(c) {
     }
   } catch (err) {
     if (err.name !== "AbortError") error = NET_ERR.test(err.message)
-      ? "Lost the connection to Octopus. Check that its window (start.bat) is still open, then press Try again." : err.message;
+      ? (S.cfg?.hosted ? "Lost the connection to Octopus. Wait a moment and press Try again." : "Lost the connection to Octopus. Check that its window (start.bat) is still open, then press Try again.") : err.message;
   }
   clearTimeout(raf); cancelAnimationFrame(raf);
   S.streaming = null; updateSend();

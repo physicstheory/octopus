@@ -70,7 +70,7 @@ Wants=network-online.target ollama.service
 [Service]
 User=octopus
 EnvironmentFile=/etc/octopus.env
-Environment=OCTOPUS_HOME=/var/lib/octopus/workspace OCTOPUS_HOST=127.0.0.1 OCTOPUS_PORT=8000 PYTHONUNBUFFERED=1
+Environment=OCTOPUS_HOSTED=server OCTOPUS_HOME=/var/lib/octopus/workspace OCTOPUS_HOST=127.0.0.1 OCTOPUS_PORT=8000 PYTHONUNBUFFERED=1
 WorkingDirectory=$APP
 ExecStart=$APP/.venv/bin/python -m octopus
 Restart=always

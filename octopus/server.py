@@ -297,6 +297,7 @@ def config(req: Request):
     ok = user is not None
     out = {"authed": ok, "needsSetup": not accounts.has_accounts(), "signupsOpen": accounts.signups_open(),
            "codeRequired": code_needed(req), "mock": settings.mock,
+           "hosted": "codespace" if ON_CODESPACE else "space" if ON_SPACE else os.environ.get("OCTOPUS_HOSTED") or None,
            "user": accounts.public(user) if user else None}
     if ok:
         allow = run_allowed(req)
