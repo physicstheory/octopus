@@ -49,12 +49,17 @@ async function api(path, opts = {}) {
   });
   if (res.status === 401 && path !== "/api/login") { showLogin(); throw new Error("Please sign in"); }
   const data = res.headers.get("content-type")?.includes("json") ? await res.json() : await res.text();
-  if (!res.ok) throw new Error(data?.detail || data?.error || `Request failed (${res.status})`);
+  if (!res.ok) throw new Error(data?.detail || data?.error || failText(res.status));
   return data;
 }
 
 // When the browser loses its connection to Octopus mid-job, find out why and, if Octopus is still
 // running, wait for the job and pick up its result. Returns {asset} or {error}.
+// 502, 503 and 504 come from a proxy in front of Octopus (a codespace or a cloud server) when Octopus itself isn't answering.
+function failText(status) {
+  return [502, 503, 504].includes(status) ? "Octopus's server isn't answering right now. It restarts by itself, so wait a few seconds and press Try again."
+    : `Request failed (${status})`;
+}
 const NET_ERR = /NetworkError|Failed to fetch|network error|Load failed|input stream|body stream/i;
 async function recoverStudio(label) {
   for (let i = 0; i < 1200; i++) {
@@ -667,7 +672,7 @@ async function generate(c) {
       body: JSON.stringify({ id, mode: c.mode, base: S.choice.base, brain: S.choice.brain,
         messages: c.messages.map(({ role, content }) => ({ role, content })) }),
     });
-    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || `Request failed (${res.status})`); }
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || failText(res.status)); }
     for await (const ev of sse(res)) {
       if (ev.t === "status") { status.hidden = false; status.replaceChildren(h("span", { class: "spinner", style: "display:inline-block;vertical-align:-2px;margin-right:8px" }), ev.d); }
       else if (ev.t === "engine") { status.hidden = true; }
@@ -1098,7 +1103,7 @@ async function generateAsset(c, kind, prompt, imageId, imageName) {
     : { prompt, model: GEN.imageModel, aspect: GEN.aspect, count: GEN.count };
   try {
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: controller.signal, credentials: "same-origin" });
-    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || `Request failed (${res.status})`); }
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || failText(res.status)); }
     for await (const ev of sse(res)) {
       if (ev.t === "progress") { label.textContent = ev.stage; if (ev.pct != null) { bar.style.width = ev.pct + "%"; pct.textContent = Math.round(ev.pct) + "%"; } }
       else if (ev.t === "done") asset = ev.asset;

@@ -11,6 +11,7 @@ formats conversations the way it was trained to.
 from __future__ import annotations
 
 import hashlib
+import math
 import json
 import os
 import urllib.error
@@ -147,6 +148,24 @@ def _pull(tag: str) -> Iterator[str]:
                 yield f"Downloading {tag}… {pct}%"
 
 
+def _total_memory_gb() -> float:
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024**3
+    except (ValueError, OSError, AttributeError):
+        return 0.0
+
+
+def _check_memory(base: str) -> None:
+    """Refuse a model that can't fit in this computer's memory, instead of letting it crash everything."""
+    info = BASE_MODELS.get(base, {})
+    need = info.get("vram", 0) * 0.6  # 4-bit weights plus room to think
+    have = _total_memory_gb()
+    if have and need > have:
+        fits = [v["label"] for v in BASE_MODELS.values() if v.get("vram", 0) * 0.6 <= have]
+        raise OllamaError(f"{info.get('label', base)} needs about {math.ceil(need)} GB of memory, but this computer only has {int(have)} GB. "
+                          f"Pick a smaller model, such as {fits[-1] if fits else 'Hatchling'}.")
+
+
 REGISTRY = "https://registry.ollama.ai/v2/library"
 
 
@@ -241,6 +260,7 @@ class OllamaEngine:
                 raise OllamaError(f"The brain '{brain}' isn't imported. Import it on the Train page.")
             base = _brain_bases().get(brain, base)
         else:
+            _check_memory(base or settings.base_model)
             yield from _pull(name)
         self.base_id, self.adapter, self.status = base, brain, "ready"
 
