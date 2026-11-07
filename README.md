@@ -12,7 +12,7 @@ The first time Octopus opens, you create the **owner** account. Everyone who use
 
 ## Four kinds of chat
 
-Pick one in the sidebar, or with the mode button inside the message box. The model menu sits next to the send button.
+Pick one in the sidebar. The model menu sits next to the send button.
 
 | | What it does |
 |---|---|

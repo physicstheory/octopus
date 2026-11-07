@@ -314,31 +314,9 @@ async function openModelMenu() {
 }
 
 // ---------- mode ----------
-const MODES = [
-  ["chat", "Chat", "Everyday questions, writing and ideas", '<path d="M5 18.5 3.5 21l.8-4A8.5 8.5 0 1 1 7.8 19.7Z"/>'],
-  ["code", "Code", "Write, explain and fix code", '<path d="m8.5 7.5-5 4.5 5 4.5M15.5 7.5l5 4.5-5 4.5M13.5 5l-3 14"/>'],
-  ["model", "3D", "Game-ready 3D models from words or pictures", '<path d="M12 3 4 7.5v9L12 21l8-4.5v-9Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>'],
-  ["image", "Image", "Pictures, concept art and icons", '<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5"/>'],
-];
-const modeBtn = $("#mode-chip"), modeMenu = $("#mode-menu");
-function pickMode(mode) {
-  if (S.view !== "chat") showChatView();
-  if (current()?.messages.length && mode !== S.mode) { setMode(mode); newChat(); } else setMode(mode);
-}
-modeBtn.addEventListener("click", (e) => {
-  e.stopPropagation();
-  if (!modeMenu.hidden) { modeMenu.hidden = true; return; }
-  modeMenu.replaceChildren(...MODES.map(([id, label, blurb, icon]) => h("button", { type: "button", class: "menu-item mode-item", role: "menuitemradio",
-    "aria-selected": String(id === S.mode), "data-m": id, onclick: () => { modeMenu.hidden = true; pickMode(id); $("#input").focus(); } },
-    h("span", { class: "mi-icon" }, svg(icon)), h("b", {}, label), svg(ICON.check, "check"), h("small", {}, blurb))));
-  modeMenu.hidden = false;
-});
-document.addEventListener("click", (e) => { if (!modeMenu.hidden && !modeMenu.contains(e.target)) modeMenu.hidden = true; });
-
 function setMode(mode, persist = true) {
   S.mode = mode; if (persist) store.set("octopus.mode", mode);
   document.body.dataset.mode = mode;
-  $("#mode-chip-label").textContent = { chat: "Chat", code: "Code", model: "3D", image: "Image" }[mode];
   $(".model-picker").hidden = mode === "model" || mode === "image";
   $("#input").placeholder = {
     chat: "Message Octopus", code: "Describe what to build, or paste code and an error",
